@@ -1,0 +1,24 @@
+RewriteEngine On
+
+Options -Indexes
+DirectoryIndex index.php
+
+# 1) Redirect "file.php" to "file"
+RewriteCond %{THE_REQUEST} \s/+(.+)\.php[\s?]
+RewriteRule ^ %1 [R=301,L]
+
+# 2) If the requested path is an existing file or directory, do nothing
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# 3) If "file.php" exists, internally serve it for "file"
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteCond %{REQUEST_FILENAME}\.php -f
+RewriteRule ^(.+)$ $1.php [L,QSA]
+
+# 4) Fallback: send everything else to index.php (front controller)
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)$ index.php/$1 [L,QSA]
