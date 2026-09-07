@@ -24,7 +24,7 @@ if (!in_array($currentRole, ['super', 'operation', 'admin'], true)) {
 
 // Helpers
 function get_user_by_id(PDO $db, int $id) {
-  $s = $db->prepare('SELECT id,name,email,role,created_at FROM users WHERE id=?');
+  $s = $db->prepare('SELECT id,name,email,role,is_active,created_at FROM users WHERE id=?');
   $s->execute([$id]);
   return $s->fetch(PDO::FETCH_ASSOC);
 }
@@ -38,8 +38,56 @@ function log_activity(PDO $db, $uid, $action, $details) {
 $error = '';
 $info = '';
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['account_status'])) {
+  verify_csrf_or_abort();
+  $id = (int)($_POST['id'] ?? 0);
+  $statusValue = (string)($_POST['is_active'] ?? '');
+  try {
+    if (!in_array($currentRole, ['admin', 'super'], true)) {
+      throw new RuntimeException('Only administrators can change account status');
+    }
+    if ($id <= 0 || !in_array($statusValue, ['0', '1'], true)) {
+      throw new RuntimeException('Invalid account status request');
+    }
+    $isActive = (int)$statusValue;
+    if ($id === (int)($user['id'] ?? 0) && $isActive === 0) {
+      throw new RuntimeException('You cannot deactivate your own account');
+    }
+
+    $targetStmt = $db->prepare('SELECT name, role FROM users WHERE id = ?');
+    $targetStmt->execute([$id]);
+    $target = $targetStmt->fetch(PDO::FETCH_ASSOC);
+    if (!$target) {
+      throw new RuntimeException('User not found');
+    }
+    if ($currentRole !== 'super' && ($target['role'] ?? '') === 'super') {
+      throw new RuntimeException('Only a super admin can change a super admin account');
+    }
+    if ($isActive === 0 && ($target['role'] ?? '') === 'super') {
+      $activeSuperCount = (int)$db->query("SELECT COUNT(*) FROM users WHERE role='super' AND is_active=1")->fetchColumn();
+      if ($activeSuperCount <= 1) {
+        throw new RuntimeException('Cannot deactivate the last active super admin');
+      }
+    }
+
+    $statusStmt = $db->prepare('UPDATE users SET is_active = ? WHERE id = ?');
+    $statusStmt->execute([$isActive, $id]);
+    $verifyStmt = $db->prepare('SELECT is_active FROM users WHERE id = ?');
+    $verifyStmt->execute([$id]);
+    if ((int)$verifyStmt->fetchColumn() !== $isActive) {
+      throw new RuntimeException('Account status could not be updated');
+    }
+
+    log_activity($db, ($user['id'] ?? null), $isActive ? 'user_activate' : 'user_deactivate', ['id'=>$id,'name'=>$target['name'] ?? '']);
+    flash_add('success', $isActive ? 'User activated successfully' : 'User deactivated successfully');
+  } catch (Throwable $e) {
+    error_log('[users.php] Account status update failed: ' . $e->getMessage());
+    flash_add('error', $e instanceof RuntimeException ? $e->getMessage() : 'Account status could not be updated');
+  }
+}
+
 // Handle POST actions
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_GET['account_status'])) {
   verify_csrf_or_abort();
   $action = $_POST['__action'] ?? '';
 
@@ -106,7 +154,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
       // prevent demoting self from super if this is the only super
       if ($user['id'] === $id) {
-        $onlySuper = (int)$db->query("SELECT COUNT(*) FROM users WHERE role='super'")->fetchColumn() <= 1;
+        $onlySuper = (int)$db->query("SELECT COUNT(*) FROM users WHERE role='super' AND is_active=1")->fetchColumn() <= 1;
         if ($onlySuper && $role !== 'super') {
           $error = 'You are the only super user. Create another super user before changing your role.';
         }
@@ -142,9 +190,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
   } elseif ($action === 'delete') {
     $id = (int)($_POST['id'] ?? 0);
-    if ($id <= 0) {
+    if ($currentRole !== 'super') {
+      $error = 'Only a super admin can permanently delete users';
+    } elseif ($id <= 0) {
       $error = 'Invalid user';
-    } elseif ($id === ($user['id'] ?? 0)) {
+    } elseif ($id === (int)($user['id'] ?? 0)) {
       $error = 'You cannot delete your own account';
     } else {
       if ($currentRole === 'operation') {
@@ -161,11 +211,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       }
 
       // if deleting last super, block
-      $isSuper = (int)$db->prepare("SELECT COUNT(*) FROM users WHERE id=? AND role='super'") && false;
-      $st = $db->prepare('SELECT role FROM users WHERE id=?');
+      $st = $db->prepare('SELECT role, is_active FROM users WHERE id=?');
       $st->execute([$id]);
-      $role = (string)($st->fetchColumn() ?: 'user');
-      if ($role === 'super') {
+      $targetUser = $st->fetch(PDO::FETCH_ASSOC);
+      $role = (string)($targetUser['role'] ?? 'user');
+      if (!$targetUser) {
+        $error = 'User not found';
+      } elseif ((int)($targetUser['is_active'] ?? 1) === 1) {
+        $error = 'Deactivate the user before permanently deleting the account';
+      } elseif ($role === 'super') {
         $countSuper = (int)$db->query("SELECT COUNT(*) FROM users WHERE role='super'")->fetchColumn();
         if ($countSuper <= 1) {
           $error = 'Cannot delete the last super user';
@@ -173,17 +227,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       }
       if ($error === '') {
         try {
-          if (function_exists('db_delete_user')) {
-              $deleted = db_delete_user($id);
-          } else {
-              $stmt = $db->prepare('DELETE FROM users WHERE id=?');
-              $stmt->execute([$id]);
-              $deleted = $stmt->rowCount();
+          if (!function_exists('db_delete_user')) {
+            throw new RuntimeException('Safe user deletion is unavailable');
           }
+          $deleted = db_delete_user($id);
 
           if ($deleted > 0) {
-            log_activity($db, ($user['id'] ?? null), 'user_delete', ['id'=>$id]);
-            flash_add('success', 'User deleted successfully');
+            $check = $db->prepare('SELECT 1 FROM users WHERE id=?');
+            $check->execute([$id]);
+            if ($check->fetchColumn()) {
+              $error = 'Delete failed: the user still exists in the database';
+            } else {
+              log_activity($db, ($user['id'] ?? null), 'user_delete', ['id'=>$id]);
+              flash_add('delete_success', 'User permanently deleted successfully');
+            }
           } else {
             $error = 'User not found or could not be deleted';
           }
@@ -192,17 +249,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
           @error_log('[users.php] Delete user failed: ' . $e->getMessage());
           $error = 'Delete failed: ' . $e->getMessage();
         }
-        if ($error === '') {
-          header('Location: users.php');
-          exit;
-        }
       }
     }
+    if ($error !== '') {
+      flash_add('delete_error', $error);
+    }
+    header('Location: users');
+    exit;
   }
 }
 
 // Load users
-$listSql = 'SELECT id,name,email,role,created_at FROM users';
+$listSql = 'SELECT id,name,email,role,is_active,created_at FROM users';
 $listParams = [];
 if ($currentRole === 'operation') {
   $listSql .= " WHERE role='supervisor'";
@@ -220,6 +278,13 @@ if ($editId) {
   }
 }
 $flashes = flash_consume();
+$deletePopup = null;
+foreach ($flashes as $flash) {
+  if (in_array($flash['type'] ?? '', ['delete_success', 'delete_error'], true)) {
+    $deletePopup = (string)($flash['message'] ?? '');
+    break;
+  }
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -266,7 +331,7 @@ $flashes = flash_consume();
     }
     
     body {
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
       background-color: #f1f5f9;
       color: #334155;
       line-height: 1.5;
@@ -663,6 +728,34 @@ $flashes = flash_consume();
       background-color: #f3f4f6;
       color: #374151;
     }
+
+    .badge-active {
+      background-color: #dcfce7;
+      color: #166534;
+    }
+
+    .badge-inactive {
+      background-color: #fee2e2;
+      color: #991b1b;
+    }
+
+    .user-inactive-row {
+      background-color: #fff7f7;
+    }
+
+    .user-inactive-row td {
+      color: #64748b;
+    }
+
+    .btn-success {
+      background-color: #16a34a;
+      color: white;
+    }
+
+    .btn-warning {
+      background-color: #f59e0b;
+      color: white;
+    }
     
     /* Mobile Responsive - delegate sidebar behavior to shared sidebar.php */
     @media (max-width: 1024px) {
@@ -759,7 +852,7 @@ $flashes = flash_consume();
 
       <!-- Flash Messages -->
       <?php foreach ($flashes as $f): ?>
-        <div class="alert <?php echo $f['type'] === 'success' ? 'alert-success' : 'alert-error'; ?>">
+        <div class="alert <?php echo in_array($f['type'], ['success', 'delete_success'], true) ? 'alert-success' : 'alert-error'; ?>">
           <?php echo htmlspecialchars($f['message']); ?>
         </div>
       <?php endforeach; ?>
@@ -789,13 +882,14 @@ $flashes = flash_consume();
                 <th>Name</th>
                 <th>Email</th>
                 <th>Role</th>
+                <th>Status</th>
                 <th>Created</th>
-                <th style="width: 180px;">Actions</th>
+                <th style="width: 280px;">Actions</th>
               </tr>
             </thead>
             <tbody>
               <?php foreach ($list as $index => $u): ?>
-              <tr>
+              <tr class="<?php echo (int)($u['is_active'] ?? 1) === 1 ? '' : 'user-inactive-row'; ?>">
                 <td><?php echo $index + 1; ?></td>
                 <td><?php echo htmlspecialchars($u['name']); ?></td>
                 <td><?php echo htmlspecialchars($u['email']); ?></td>
@@ -804,13 +898,25 @@ $flashes = flash_consume();
                     <?php echo htmlspecialchars(ucfirst($u['role'])); ?>
                   </span>
                 </td>
+                <td><span class="badge <?php echo (int)($u['is_active'] ?? 1) === 1 ? 'badge-active' : 'badge-inactive'; ?>"><?php echo (int)($u['is_active'] ?? 1) === 1 ? 'Active' : 'Inactive'; ?></span></td>
                 <td><?php echo htmlspecialchars($u['created_at']); ?></td>
                 <td>
-                  <div style="display: flex; gap: 0.5rem;">
+                  <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
                     <a href="users.php?edit=<?php echo (int)$u['id']; ?>#edit" class="btn btn-secondary btn-sm">
                       <i class="fas fa-edit mr-1"></i> Edit
                     </a>
-                    <form method="post" action="users.php" style="display: inline;" class="js-delete-user" data-user-label="<?php echo htmlspecialchars(($u['name'] ?? '') . ' (' . ($u['email'] ?? '') . ')'); ?>" onsubmit="return confirm('Are you sure you want to delete <?php echo htmlspecialchars(addslashes(($u['name'] ?? '') . ' (' . ($u['email'] ?? '') . ')')); ?>?');">
+                    <?php if (in_array($currentRole, ['admin', 'super'], true) && (int)$u['id'] !== (int)($user['id'] ?? 0) && ($currentRole === 'super' || ($u['role'] ?? '') !== 'super')): ?>
+                    <form method="post" action="users?account_status=1" style="display: inline;">
+                      <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars(csrf_token()); ?>">
+                      <input type="hidden" name="id" value="<?php echo (int)$u['id']; ?>">
+                      <input type="hidden" name="is_active" value="<?php echo (int)($u['is_active'] ?? 1) === 1 ? 0 : 1; ?>">
+                      <button type="submit" class="btn <?php echo (int)($u['is_active'] ?? 1) === 1 ? 'btn-warning' : 'btn-success'; ?> btn-sm">
+                        <i class="fas <?php echo (int)($u['is_active'] ?? 1) === 1 ? 'fa-user-slash' : 'fa-user-check'; ?> mr-1"></i> <?php echo (int)($u['is_active'] ?? 1) === 1 ? 'Deactivate' : 'Activate'; ?>
+                      </button>
+                    </form>
+                    <?php endif; ?>
+                    <?php if ($currentRole === 'super' && (int)$u['id'] !== (int)($user['id'] ?? 0) && (int)($u['is_active'] ?? 1) === 0): ?>
+                    <form method="post" action="users" style="display: inline;" class="js-delete-user" data-user-label="<?php echo htmlspecialchars(($u['name'] ?? '') . ' (' . ($u['email'] ?? '') . ')'); ?>">
                       <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars(csrf_token()); ?>">
                       <input type="hidden" name="__action" value="delete">
                       <input type="hidden" name="id" value="<?php echo (int)$u['id']; ?>">
@@ -818,13 +924,14 @@ $flashes = flash_consume();
                         <i class="fas fa-trash mr-1"></i> Delete
                       </button>
                     </form>
+                    <?php endif; ?>
                   </div>
                 </td>
               </tr>
               <?php endforeach; ?>
               <?php if (!$list): ?>
               <tr>
-                <td colspan="6" style="text-align: center; color: #64748b; padding: 2rem;">
+                <td colspan="7" style="text-align: center; color: #64748b; padding: 2rem;">
                   No users found
                 </td>
               </tr>
@@ -945,6 +1052,10 @@ $flashes = flash_consume();
   </div>
 
   <script>
+    <?php if ($deletePopup !== null): ?>
+    window.alert(<?php echo json_encode($deletePopup, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>);
+    <?php endif; ?>
+
     // Toggle profile dropdown
     if (!window.__profileDropdownBound) {
       document.getElementById('userProfile').addEventListener('click', function() {
@@ -965,7 +1076,7 @@ $flashes = flash_consume();
     document.querySelectorAll('form.js-delete-user').forEach(function (form) {
       form.addEventListener('submit', function (e) {
         var label = form.getAttribute('data-user-label') || 'this user';
-        var ok = confirm('Are you sure you want to delete ' + label + '?');
+        var ok = confirm('Permanently delete ' + label + '? This cannot be undone.');
         if (!ok) {
           e.preventDefault();
         }

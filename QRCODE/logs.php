@@ -18,7 +18,7 @@ if (file_exists($logFile)) {
   <title>Error Logs</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:#0b1020; color:#e2e8f0; margin:0; }
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; background:#0b1020; color:#e2e8f0; margin:0; }
     .container { max-width: 1100px; margin: 0 auto; padding: 1rem; }
     .card { background:#0f172a; border:1px solid #1e293b; border-radius:10px; padding:1rem; }
     .header { display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; }

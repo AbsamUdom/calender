@@ -155,7 +155,7 @@ $today_events = $stmt_today->fetchAll(PDO::FETCH_ASSOC);
     }
     
     body {
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
       background-color: #f1f5f9;
       color: #334155;
       line-height: 1.5;
@@ -749,7 +749,7 @@ $today_events = $stmt_today->fetchAll(PDO::FETCH_ASSOC);
           </h2>
           
           <div class="section-actions">
-            <a href="events.php" class="btn btn-primary">
+            <a href="events?mode=form" class="btn btn-primary">
               <i class="fas fa-plus mr-2"></i>
               New Event
             </a>

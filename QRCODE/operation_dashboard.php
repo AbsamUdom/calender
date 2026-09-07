@@ -270,7 +270,7 @@ try {
 
 $supervisors = [];
 try {
-    $supStmt = $db->query("SELECT id, name, email FROM users WHERE role = 'supervisor' ORDER BY name");
+    $supStmt = $db->query("SELECT id, name, email FROM users WHERE role = 'supervisor' AND is_active = 1 ORDER BY name");
     $supervisors = $supStmt ? $supStmt->fetchAll(PDO::FETCH_ASSOC) : [];
 } catch (Exception $e) {
     $supervisors = [];
@@ -296,7 +296,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $supName = '';
             try {
-                $stmt = $db->prepare("SELECT name FROM users WHERE id = ? AND role = 'supervisor'");
+                $stmt = $db->prepare("SELECT name FROM users WHERE id = ? AND role = 'supervisor' AND is_active = 1");
                 $stmt->execute([$supervisorUserId]);
                 $supName = (string)($stmt->fetchColumn() ?? '');
             } catch (Exception $e) {
@@ -342,7 +342,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $supName = '';
         try {
-            $stmt = $db->prepare("SELECT name FROM users WHERE id = ? AND role = 'supervisor'");
+            $stmt = $db->prepare("SELECT name FROM users WHERE id = ? AND role = 'supervisor' AND is_active = 1");
             $stmt->execute([$supervisorUserId]);
             $supName = (string)($stmt->fetchColumn() ?? '');
         } catch (Throwable $e) {

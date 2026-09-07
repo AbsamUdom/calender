@@ -29,7 +29,7 @@ $focusEventId = (int)($_GET['event_id'] ?? 0);
 $selectedSupervisor = null;
 $supervisors = [];
 try {
-    $stmt = $db->query("SELECT id, name, email, phone, role, created_at FROM users WHERE LOWER(role) = 'supervisor' ORDER BY name");
+    $stmt = $db->query("SELECT id, name, email, phone, role, created_at FROM users WHERE LOWER(role) = 'supervisor' AND is_active = 1 ORDER BY name");
     $supervisors = $stmt ? ($stmt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
 } catch (Throwable $e) {
     $supervisors = [];
@@ -117,7 +117,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $supNames = [];
         try {
             $placeholders = implode(',', array_fill(0, count($supervisorIds), '?'));
-            $stmt = $db->prepare("SELECT id, name FROM users WHERE id IN ($placeholders) AND LOWER(role) = 'supervisor'");
+            $stmt = $db->prepare("SELECT id, name FROM users WHERE id IN ($placeholders) AND LOWER(role) = 'supervisor' AND is_active = 1");
             $stmt->execute($supervisorIds);
             $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
             $byId = [];
@@ -134,8 +134,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $supNames = [];
         }
 
-        if (empty($supNames)) {
-            flash_add('error', 'Invalid supervisor.');
+        if (count($supNames) !== count($supervisorIds)) {
+            flash_add('error', 'One or more selected supervisors are inactive or invalid.');
             header('Location: register_supervisor.php');
             exit;
         }
@@ -221,6 +221,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($action === 'delete_supervisor') {
         $supId = (int)($_POST['id'] ?? 0);
+        if (!in_array($role, ['admin', 'super'], true)) {
+            flash_add('error', 'Only administrators can deactivate supervisors.');
+            header('Location: register_supervisor.php');
+            exit;
+        }
         if ($supId <= 0) {
             flash_add('error', 'Missing supervisor.');
             header('Location: register_supervisor.php');
@@ -228,11 +233,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         try {
-            $stmt = $db->prepare("DELETE FROM users WHERE id = ? AND role = 'supervisor'");
+            $stmt = $db->prepare("UPDATE users SET is_active = 0 WHERE id = ? AND role = 'supervisor'");
             $stmt->execute([$supId]);
-            flash_add('success', 'Supervisor deleted successfully.');
+            db_log_activity((int)($user['id'] ?? 0), 'user_deactivate', json_encode(['id' => $supId, 'role' => 'supervisor']));
+            flash_add('success', 'Supervisor deactivated successfully.');
         } catch (Throwable $e) {
-            flash_add('error', 'Failed to delete supervisor: ' . $e->getMessage());
+            flash_add('error', 'Failed to deactivate supervisor: ' . $e->getMessage());
         }
 
         header('Location: register_supervisor.php');
@@ -566,14 +572,16 @@ $flashes = flash_consume();
                                     <a href="register_supervisor.php?mode=edit&edit_id=<?php echo (int)$sup['id']; ?>" title="Edit" class="inline-flex items-center justify-center w-10 h-10 rounded-full bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors ml-1">
                                         <i class="fas fa-pen"></i>
                                     </a>
-                                    <form method="post" style="display:inline;" onsubmit="return confirm('Delete this supervisor?');" class="ml-1">
+                                    <?php if (in_array($role, ['admin', 'super'], true)): ?>
+                                    <form method="post" style="display:inline;" onsubmit="return confirm('Deactivate this supervisor?');" class="ml-1">
                                         <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars(csrf_token()); ?>">
                                         <input type="hidden" name="action" value="delete_supervisor">
                                         <input type="hidden" name="id" value="<?php echo (int)$sup['id']; ?>">
-                                        <button type="submit" title="Delete" class="inline-flex items-center justify-center w-10 h-10 rounded-full bg-red-50 text-red-600 hover:bg-red-100 transition-colors">
-                                            <i class="fas fa-trash"></i>
+                                        <button type="submit" title="Deactivate" class="inline-flex items-center justify-center w-10 h-10 rounded-full bg-amber-50 text-amber-600 hover:bg-amber-100 transition-colors">
+                                            <i class="fas fa-user-slash"></i>
                                         </button>
                                     </form>
+                                    <?php endif; ?>
                                 </td>
                             </tr>
                         <?php $supNo++; endforeach; ?>

@@ -106,9 +106,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       margin: 0;
       padding: 0;
     }
+
+    button,
+    input,
+    select,
+    textarea {
+      font: inherit;
+    }
     
     body {
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
       background: linear-gradient(135deg, #1e3a8a 0%, #3730a3 100%);
       color: #334155;
       line-height: 1.5;

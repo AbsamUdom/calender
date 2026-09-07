@@ -53,7 +53,7 @@ if (session_status() === PHP_SESSION_ACTIVE) {
 
 <style>
     body {
-        font-family: Arial, sans-serif;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
         line-height: 1.6;
         margin: 20px;
         max-width: 800px;

@@ -89,7 +89,30 @@ if (isset($_GET['logout']) && ($_GET['logout'] === '' || $_GET['logout'] === '1'
 
 // Authentication functions
 function current_user() {
-    return $_SESSION['user'] ?? null;
+    $user = $_SESSION['user'] ?? null;
+    if (!$user || empty($user['id'])) {
+        return null;
+    }
+
+    static $checkedUserId = null;
+    static $checkedActive = false;
+    $userId = (int)$user['id'];
+    if ($checkedUserId !== $userId) {
+        $checkedUserId = $userId;
+        try {
+            $checkedActive = db_is_user_active($userId);
+        } catch (Throwable $e) {
+            $checkedActive = false;
+            error_log('User status check failed: ' . $e->getMessage());
+        }
+    }
+    if (!$checkedActive) {
+        unset($_SESSION['user']);
+        $_SESSION['account_inactive'] = true;
+        return null;
+    }
+
+    return $user;
 }
 
 function login_user($email, $password) {
@@ -118,6 +141,7 @@ function login_user($email, $password) {
             'email' => $user['email'],
             'role' => $role,
         ];
+        unset($_SESSION['account_inactive']);
         
         // Log the activity
         db_log_activity($user['id'], 'login', "User logged in: {$user['email']}");
@@ -148,7 +172,9 @@ function logout_user() {
 
 function require_login() {
     if (!current_user()) {
-        header('Location: login.php');
+        $inactive = !empty($_SESSION['account_inactive']);
+        unset($_SESSION['account_inactive']);
+        header('Location: login.php' . ($inactive ? '?inactive=1' : ''));
         exit;
     }
     // Refresh user from DB to ensure latest role/name/email are applied
@@ -156,6 +182,11 @@ function require_login() {
         $me = current_user();
         if ($me && isset($me['id'])) {
             $user_data = db_get_user_by_id($me['id']);
+            if (!$user_data || (int)($user_data['is_active'] ?? 1) !== 1) {
+                logout_user();
+                header('Location: login.php?inactive=1');
+                exit;
+            }
             if ($user_data) {
                 // Only update if something changed to avoid session churn
                 if ($user_data['role'] !== ($me['role'] ?? 'user') || $user_data['name'] !== ($me['name'] ?? '') || $user_data['email'] !== ($me['email'] ?? '')) {

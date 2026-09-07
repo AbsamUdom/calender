@@ -46,11 +46,15 @@ function db_initialize_database_schema($pdo) {
             email VARCHAR(255) NOT NULL UNIQUE,
             password_hash VARCHAR(255) NOT NULL,
             role VARCHAR(20) NOT NULL DEFAULT 'user',
+            is_active TINYINT(1) NOT NULL DEFAULT 1,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
         if (!db_has_column($pdo, 'users', 'phone')) {
             $pdo->exec("ALTER TABLE users ADD COLUMN phone VARCHAR(50) NULL AFTER email");
+        }
+        if (!db_has_column($pdo, 'users', 'is_active')) {
+            $pdo->exec("ALTER TABLE users ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1 AFTER role");
         }
 
         // Ensure default user exists
@@ -564,10 +568,10 @@ function db_create_event($event_data) {
     }
     
     // Verify the user exists
-    $stmt = $pdo->prepare("SELECT id FROM users WHERE id = ?");
+    $stmt = $pdo->prepare("SELECT id FROM users WHERE id = ? AND is_active = 1");
     $stmt->execute([$event_data['user_id']]);
     if (!$stmt->fetch()) {
-        throw new Exception("Invalid user_id: User does not exist");
+        throw new Exception("Invalid user_id: User is inactive or does not exist");
     }
     
     // Generate secret code if not provided
@@ -755,23 +759,37 @@ function db_delete_user($user_id) {
         return 0;
     }
 
-    $fallbackUserId = 0;
-    try {
-        $st = $pdo->prepare("SELECT id FROM users WHERE id <> ? ORDER BY (role='super') DESC, id ASC LIMIT 1");
-        $st->execute([$user_id]);
-        $fallbackUserId = (int)($st->fetchColumn() ?: 0);
-    } catch (Throwable $e) {
-        $fallbackUserId = 0;
-    }
-
     try {
         $ownsTx = !$pdo->inTransaction();
         if ($ownsTx) {
             $pdo->beginTransaction();
         }
 
-        // Delete activities logged by this user
-        $pdo->prepare("DELETE FROM activities WHERE user_id = ?")->execute([$user_id]);
+        $targetStmt = $pdo->prepare("SELECT role, is_active FROM users WHERE id = ? FOR UPDATE");
+        $targetStmt->execute([$user_id]);
+        $targetUser = $targetStmt->fetch(PDO::FETCH_ASSOC);
+        if (!$targetUser) {
+            throw new RuntimeException('User not found');
+        }
+        if ((int)($targetUser['is_active'] ?? 1) === 1) {
+            throw new RuntimeException('Deactivate the user before permanently deleting the account');
+        }
+        if (($targetUser['role'] ?? '') === 'super') {
+            $superRows = $pdo->query("SELECT id FROM users WHERE role = 'super' FOR UPDATE")->fetchAll(PDO::FETCH_COLUMN);
+            if (count($superRows) <= 1) {
+                throw new RuntimeException('Cannot delete the last super user');
+            }
+        }
+
+        $st = $pdo->prepare("SELECT id FROM users WHERE id <> ? AND is_active = 1 ORDER BY (role='super') DESC, id ASC LIMIT 1 FOR UPDATE");
+        $st->execute([$user_id]);
+        $fallbackUserId = (int)($st->fetchColumn() ?: 0);
+        if ($fallbackUserId <= 0) {
+            throw new RuntimeException('An active fallback user is required before this account can be deleted');
+        }
+
+        // Preserve activities while removing the deleted user reference
+        $pdo->prepare("UPDATE activities SET user_id = NULL WHERE user_id = ?")->execute([$user_id]);
 
         // Events created by this user: reassign to fallback user (events.user_id is NOT NULL)
         if ($fallbackUserId > 0) {
@@ -781,6 +799,27 @@ function db_delete_user($user_id) {
         // NULL-out optional references in events (if column is nullable)
         try { $pdo->prepare("UPDATE events SET coordinator_id = NULL WHERE coordinator_id = ?")->execute([$user_id]); } catch (Throwable $e) {}
         try { $pdo->prepare("UPDATE events SET quote_reviewed_by = NULL WHERE quote_reviewed_by = ?")->execute([$user_id]); } catch (Throwable $e) {}
+        try { $pdo->prepare("UPDATE events SET production_updated_by = NULL WHERE production_updated_by = ?")->execute([$user_id]); } catch (Throwable $e) {}
+        try { $pdo->prepare("UPDATE events SET execution_updated_by = NULL WHERE execution_updated_by = ?")->execute([$user_id]); } catch (Throwable $e) {}
+        try {
+            $eventAssignments = $pdo->query("SELECT id, coordinators, graphics_users, supervisors FROM events")->fetchAll(PDO::FETCH_ASSOC);
+            $updateAssignments = $pdo->prepare("UPDATE events SET coordinators = ?, graphics_users = ?, supervisors = ? WHERE id = ?");
+            foreach ($eventAssignments as $eventAssignment) {
+                $values = [];
+                $changed = false;
+                foreach (['coordinators', 'graphics_users', 'supervisors'] as $column) {
+                    $ids = json_decode((string)($eventAssignment[$column] ?? ''), true);
+                    $ids = is_array($ids) ? array_values(array_unique(array_map('intval', $ids))) : [];
+                    $filteredIds = array_values(array_filter($ids, fn($id) => $id !== $user_id));
+                    $changed = $changed || count($filteredIds) !== count($ids);
+                    $values[] = json_encode($filteredIds);
+                }
+                if ($changed) {
+                    $values[] = (int)$eventAssignment['id'];
+                    $updateAssignments->execute($values);
+                }
+            }
+        } catch (Throwable $e) {}
 
         // Release orders uploaded by user: reassign to fallback user (uploaded_by is typically NOT NULL)
         if ($fallbackUserId > 0) {
@@ -833,10 +872,9 @@ function db_delete_user($user_id) {
             $pdo->prepare("UPDATE event_actions SET reviewed_by = NULL WHERE reviewed_by = ?")->execute([$user_id]);
         } catch (Throwable $e) {}
 
-        // Delete print tasks created/updated by this user (created_by/updated_by are commonly NOT NULL)
-        try {
-            $pdo->prepare("DELETE FROM print_tasks WHERE created_by = ? OR updated_by = ?")->execute([$user_id, $user_id]);
-        } catch (Throwable $e) {}
+        // Preserve print tasks while removing the deleted user references
+        try { $pdo->prepare("UPDATE print_tasks SET created_by = NULL WHERE created_by = ?")->execute([$user_id]); } catch (Throwable $e) {}
+        try { $pdo->prepare("UPDATE print_tasks SET updated_by = NULL WHERE updated_by = ?")->execute([$user_id]); } catch (Throwable $e) {}
 
         // Job forms prepared by / assigned to this user: reassign (prepared_by/coordinator_id are NOT NULL)
         if ($fallbackUserId > 0) {
@@ -867,6 +905,8 @@ function db_delete_user($user_id) {
                 'accountant_reviewed_by',
                 'receiving_updated_by',
                 'quote_reviewed_by',
+                'production_updated_by',
+                'execution_updated_by',
                 'supervisor_user_id'
             ];
             $in = implode(',', array_fill(0, count($candidateCols), '?'));
@@ -896,21 +936,19 @@ function db_delete_user($user_id) {
             // ignore
         }
 
-        // Delete the user (last resort: temporarily disable FK checks).
-        // Some MySQL setups ignore FK check changes inside an open transaction.
-        if ($ownsTx && $pdo->inTransaction()) {
-            $pdo->commit();
-            $ownsTx = false;
-        }
-        try { $pdo->exec('SET FOREIGN_KEY_CHECKS=0'); } catch (Throwable $e) {}
+        // Delete the user only after related references have been cleaned.
+        // Keep cleanup and the final delete in the same transaction.
         $stmt = $pdo->prepare("DELETE FROM users WHERE id = ?");
         $stmt->execute([$user_id]);
-        try { $pdo->exec('SET FOREIGN_KEY_CHECKS=1'); } catch (Throwable $e) {}
+        $deleted = $stmt->rowCount();
+        if ($deleted !== 1) {
+            throw new RuntimeException('The user record could not be deleted');
+        }
 
         if ($ownsTx && $pdo->inTransaction()) {
             $pdo->commit();
         }
-        return $stmt->rowCount();
+        return $deleted;
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) {
             $pdo->rollBack();
@@ -922,24 +960,31 @@ function db_delete_user($user_id) {
 // Database query functions only - ALL with db_ prefix
 function db_get_user_by_id($user_id) {
     $pdo = get_db();
-    $stmt = $pdo->prepare("SELECT id, name, email, role FROM users WHERE id = ?");
+    $stmt = $pdo->prepare("SELECT id, name, email, role, is_active FROM users WHERE id = ?");
     $stmt->execute([$user_id]);
     return $stmt->fetch();
 }
 
 function db_get_user_by_email($email) {
     $pdo = get_db();
-    $stmt = $pdo->prepare("SELECT id, name, email, password_hash, role FROM users WHERE email = ?");
+    $stmt = $pdo->prepare("SELECT id, name, email, password_hash, role, is_active FROM users WHERE email = ?");
     $stmt->execute([$email]);
     return $stmt->fetch();
 }
 
 function db_verify_user_password($email, $password) {
     $user = db_get_user_by_email($email);
-    if ($user && password_verify($password, $user['password_hash'])) {
+    if ($user && (int)($user['is_active'] ?? 1) === 1 && password_verify($password, $user['password_hash'])) {
         return $user;
     }
     return false;
+}
+
+function db_is_user_active($user_id) {
+    $pdo = get_db();
+    $stmt = $pdo->prepare("SELECT 1 FROM users WHERE id = ? AND is_active = 1");
+    $stmt->execute([(int)$user_id]);
+    return (bool)$stmt->fetchColumn();
 }
 
 function db_create_user($user_data) {

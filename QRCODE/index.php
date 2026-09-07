@@ -116,6 +116,7 @@ $quoteEvents = [];
 $quotePendingCount = 0;
 $quoteApprovedCount = 0;
 $quoteRejectedCount = 0;
+$salesAllTimeEvents = 0;
 
 // Basic error handling for database queries
 try {
@@ -156,6 +157,25 @@ try {
     $sumAmount = (float)($stats['total_amount'] ?? 0);
     $sumAdvance = (float)($stats['total_advance'] ?? 0);
     $sumBalance = (float)($stats['total_balance'] ?? 0);
+
+    if ($role === 'sales') {
+        $salesUserId = (int)($user['id'] ?? 0);
+        $salesUserName = trim((string)($user['name'] ?? ''));
+        $salesUserName = function_exists('mb_strtolower') ? mb_strtolower($salesUserName, 'UTF-8') : strtolower($salesUserName);
+        $salesEventsStmt = $db->query('SELECT id, coordinator_id, coordinator, coordinators FROM events');
+        $salesAssignedEventIds = [];
+        foreach ($salesEventsStmt ? ($salesEventsStmt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [] as $salesEvent) {
+            $coordinatorIds = json_decode((string)($salesEvent['coordinators'] ?? ''), true);
+            $coordinatorIds = is_array($coordinatorIds) ? array_values(array_unique(array_filter(array_map('intval', $coordinatorIds), fn($id) => $id > 0))) : [];
+            $coordinatorIds[] = (int)($salesEvent['coordinator_id'] ?? 0);
+            $legacyCoordinator = trim((string)($salesEvent['coordinator'] ?? ''));
+            $legacyCoordinator = function_exists('mb_strtolower') ? mb_strtolower($legacyCoordinator, 'UTF-8') : strtolower($legacyCoordinator);
+            if (in_array($salesUserId, $coordinatorIds, true) || $legacyCoordinator === $salesUserName) {
+                $salesAssignedEventIds[(int)$salesEvent['id']] = true;
+            }
+        }
+        $salesAllTimeEvents = count($salesAssignedEventIds);
+    }
 
     error_log('Index stats: role=' . ($user['role'] ?? 'unknown') .
         ' total=' . $totalEvents .
@@ -464,7 +484,7 @@ $displayMonth = date('F Y', strtotime($selectedMonth . '-01'));
     }
     
     body {
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
       background-color: #f1f5f9;
       color: #334155;
       line-height: 1.5;
@@ -1320,6 +1340,24 @@ $displayMonth = date('F Y', strtotime($selectedMonth . '-01'));
           </div>
         </div>
       </div>
+
+      <?php if ($role === 'sales'): ?>
+      <div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 mb-6 flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+        <div class="flex items-center gap-4 min-w-0">
+          <div class="w-14 h-14 rounded-2xl bg-blue-100 text-blue-600 flex items-center justify-center flex-shrink-0">
+            <i class="fas fa-user text-xl"></i>
+          </div>
+          <div class="min-w-0">
+            <h2 class="text-lg font-bold text-gray-900 truncate"><?php echo htmlspecialchars((string)($user['name'] ?? 'Sales User')); ?></h2>
+            <p class="text-sm text-gray-500 mt-2 break-all"><?php echo htmlspecialchars((string)($user['email'] ?? '')); ?> · Sales Team</p>
+          </div>
+        </div>
+        <div class="bg-blue-50 rounded-2xl px-7 py-4 text-center flex-shrink-0 sm:min-w-36">
+          <div class="text-2xl font-extrabold text-blue-700"><?php echo number_format($salesAllTimeEvents); ?></div>
+          <div class="text-xs font-semibold text-blue-700 mt-1">All-Time Events</div>
+        </div>
+      </div>
+      <?php endif; ?>
 
       <!-- Main Dashboard Grid -->
       <div class="grid grid-cols-1 xl:grid-cols-12 gap-6">

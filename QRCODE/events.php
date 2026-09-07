@@ -127,7 +127,7 @@ try {
     // Preload list of coordinators (sales users)
     $coordinators = [];
     try {
-        $coStmt = $db->query("SELECT id, name, email FROM users WHERE role = 'sales' ORDER BY name");
+        $coStmt = $db->query("SELECT id, name, email FROM users WHERE role = 'sales' AND is_active = 1 ORDER BY name");
         $coordinators = $coStmt ? $coStmt->fetchAll(PDO::FETCH_ASSOC) : [];
     } catch (Exception $e) {
         $coordinators = [];
@@ -137,7 +137,7 @@ try {
     $supervisors = [];
     if ($canAssignSupervisor) {
         try {
-            $supStmt = $db->query("SELECT id, name, email FROM users WHERE LOWER(role) = 'supervisor' ORDER BY name");
+            $supStmt = $db->query("SELECT id, name, email FROM users WHERE LOWER(role) = 'supervisor' AND is_active = 1 ORDER BY name");
             $supervisors = $supStmt ? $supStmt->fetchAll(PDO::FETCH_ASSOC) : [];
         } catch (Exception $e) {
             // If users table is missing or query fails, keep supervisors list empty
@@ -147,7 +147,7 @@ try {
 
     $graphicUsers = [];
     try {
-        $gStmt = $db->query("SELECT id, name, email FROM users WHERE role LIKE 'graphic%' ORDER BY name");
+        $gStmt = $db->query("SELECT id, name, email FROM users WHERE role LIKE 'graphic%' AND is_active = 1 ORDER BY name");
         $graphicUsers = $gStmt ? $gStmt->fetchAll(PDO::FETCH_ASSOC) : [];
     } catch (Exception $e) {
         $graphicUsers = [];
@@ -185,6 +185,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $db) {
                 }
             }
             return '__invalid__';
+        };
+
+        $requireActiveUsers = function ($ids, $team) use ($db) {
+            $ids = array_values(array_unique(array_filter(array_map('intval', is_array($ids) ? $ids : []), fn($id) => $id > 0)));
+            if (!$ids) {
+                return;
+            }
+            $roleConditions = [
+                'sales' => "role = 'sales'",
+                'graphic' => "role LIKE 'graphic%'",
+                'supervisor' => "LOWER(role) = 'supervisor'",
+            ];
+            if (!isset($roleConditions[$team])) {
+                throw new Exception('Invalid assignment team');
+            }
+            $placeholders = implode(',', array_fill(0, count($ids), '?'));
+            $stmt = $db->prepare("SELECT COUNT(*) FROM users WHERE id IN ($placeholders) AND is_active = 1 AND " . $roleConditions[$team]);
+            $stmt->execute($ids);
+            if ((int)$stmt->fetchColumn() !== count($ids)) {
+                throw new Exception('One or more selected team members are inactive or invalid');
+            }
         };
 
         if (!$canManageEvents && (isset($_POST['create_event']) || isset($_POST['update_event']) || isset($_POST['import_events']))) {
@@ -233,6 +254,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $db) {
             if (empty($supervisorIds)) {
                 throw new Exception('Please select at least one supervisor');
             }
+            $requireActiveUsers($supervisorIds, 'supervisor');
 
             $stmt = $db->prepare('UPDATE events SET supervisor = ?, supervisors = ? WHERE id = ?');
             $stmt->execute([$ev_supervisor, json_encode($supervisorIds), $ev_id]);
@@ -299,6 +321,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $db) {
                     }
                 }
             }
+
+            $requireActiveUsers($ev_coordinators, 'sales');
+            $requireActiveUsers($ev_graphics_users, 'graphic');
+            $requireActiveUsers($ev_supervisors, 'supervisor');
             
             $ev_suppliers = trim($_POST['ev_suppliers'] ?? '');
             $ev_head = trim($_POST['ev_head'] ?? '');
@@ -546,6 +572,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $db) {
                     }
                 }
             }
+
+            $requireActiveUsers($ev_coordinators, 'sales');
+            $requireActiveUsers($ev_graphics_users, 'graphic');
+            $requireActiveUsers($ev_supervisors, 'supervisor');
             
             $ev_suppliers = trim($_POST['ev_suppliers'] ?? '');
             $ev_head = trim($_POST['ev_head'] ?? '');
@@ -1352,19 +1382,80 @@ if (($role ?? '') === 'operation' && $mode === 'list') {
     }
     
     .dataTables_wrapper .dataTables_info {
-      float: left;
+      float: none;
       font-size: 0.85rem;
       color: #64748b;
     }
     
     .dataTables_wrapper .dataTables_paginate {
-      float: right;
+      float: none;
+    }
+
+    .dataTables_wrapper > .row:last-child {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      width: 100%;
+      margin: 0;
+      padding: 0.75rem 0.25rem 0;
+    }
+
+    .dataTables_wrapper > .row:last-child > [class*="col-"] {
+      width: auto;
+      max-width: 100%;
+      padding: 0;
+    }
+
+    .dataTables_wrapper .dataTables_paginate ul.pagination {
+      display: flex !important;
+      flex-direction: row !important;
+      align-items: center;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+      gap: 0.25rem;
+      padding: 0;
+      margin: 0;
+      list-style: none;
+    }
+
+    .dataTables_wrapper .dataTables_paginate li.page-item {
+      display: block;
+      padding: 0;
+      margin: 0;
+    }
+
+    .dataTables_wrapper .dataTables_paginate .page-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 2rem;
+      height: 2rem;
+      padding: 0.35rem 0.65rem;
+      border: 1px solid #e2e8f0;
+      border-radius: 0.5rem;
+      background: #fff;
+      color: #475569;
+      text-decoration: none;
+      line-height: 1;
+    }
+
+    .dataTables_wrapper .dataTables_paginate .page-item.active .page-link {
+      border-color: #2563eb;
+      background: #2563eb;
+      color: #fff;
+    }
+
+    .dataTables_wrapper .dataTables_paginate .page-item.disabled .page-link {
+      color: #94a3b8;
+      background: #f8fafc;
+      pointer-events: none;
     }
     
     .dataTables_wrapper .dataTables_paginate .paginate_button {
-      padding: 0.25rem 0.5rem;
-      margin-left: 0.15rem;
-      border-radius: 999px;
+      padding: 0;
+      margin-left: 0;
+      border-radius: 0.5rem;
     }
 
     /* DataTables overrides */
@@ -1381,10 +1472,10 @@ if (($role ?? '') === 'operation' && $mode === 'list') {
     }
     
     .dataTables_wrapper .dataTables_paginate .paginate_button {
-      padding: 0.25rem 0.5rem;
+      padding: 0;
       margin-left: 0;
-      border: 1px solid transparent;
-      border-radius: 0.25rem;
+      border: 0;
+      border-radius: 0.5rem;
     }
     
     .dataTables_wrapper .dataTables_paginate .paginate_button.current, 
@@ -1415,13 +1506,26 @@ if (($role ?? '') === 'operation' && $mode === 'list') {
     
     /* Responsive table styles */
     @media screen and (max-width: 767px) {
+      .dataTables_wrapper > .row:last-child {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .dataTables_wrapper > .row:last-child > [class*="col-"] {
+        width: 100%;
+      }
+
       .dataTables_wrapper .dataTables_info,
       .dataTables_wrapper .dataTables_paginate {
-        text-align: left;
+        text-align: center;
+      }
+
+      .dataTables_wrapper .dataTables_paginate ul.pagination {
+        justify-content: center;
       }
       
       .dataTables_wrapper .dataTables_paginate .paginate_button {
-        padding: 0.15rem 0.3rem;
+        padding: 0;
         font-size: 0.75rem;
       }
     }
@@ -1444,7 +1548,7 @@ if (($role ?? '') === 'operation' && $mode === 'list') {
     }
     
     body {
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
       background-color: #f1f5f9;
       color: #334155;
       line-height: 1.5;
@@ -2840,17 +2944,18 @@ if (($role ?? '') === 'operation' && $mode === 'list') {
             <?php if ($canManageEvents): ?>
             <a href="events.php?mode=form" class="btn btn-primary"><i class="fas fa-plus mr-1"></i> Add Event</a>
             <?php endif; ?>
-            <button id="toggleFilters" class="btn btn-secondary"><i class="fas fa-search mr-1"></i> Search</button>
+            <button id="toggleFilters" class="btn btn-secondary"><i class="fas fa-search mr-1"></i> <?php echo $role === 'supervisor' ? 'Search Event Information' : 'Search'; ?></button>
           </div>
         </div>
         
         <!-- Search Panel -->
-        <div id="searchPanel" class="bg-gray-50 p-4 rounded-lg mb-4" style="display: none;">
-          <h3 class="text-lg font-medium mb-3">Search Events</h3>
+        <div id="searchPanel" class="bg-gray-50 p-4 rounded-lg mb-4" style="display: <?php echo $role === 'supervisor' ? 'block' : 'none'; ?>;">
+          <h3 class="text-lg font-medium <?php echo $role === 'supervisor' ? 'mb-1' : 'mb-3'; ?>"><?php echo $role === 'supervisor' ? 'Search Any Event Information' : 'Search Events'; ?></h3>
+          <?php if ($role === 'supervisor'): ?><p class="text-sm text-gray-500 mb-3">Search by event, client, location, coordinator, graphic, supervisor, status, remarks or date.</p><?php endif; ?>
           <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">Search Text</label>
-              <input type="text" id="globalSearch" class="form-input w-full" placeholder="Search across all columns...">
+              <input type="text" id="globalSearch" class="form-input w-full" placeholder="<?php echo $role === 'supervisor' ? 'Search any event information...' : 'Search across all columns...'; ?>">
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">Date Range</label>

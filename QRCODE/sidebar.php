@@ -23,6 +23,21 @@ function is_active($file, $alsoQueryKey = null, $alsoQueryValue = null) {
 }
 ?>
 <style>
+  html, body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+  }
+  button, input, select, textarea {
+    font: inherit;
+  }
+  .alert-success,
+  .success-message,
+  .flash-success,
+  [data-flash-type="success"] {
+    background-color: #dcfce7 !important;
+    border: 1px solid #86efac !important;
+    border-left: 4px solid #16a34a !important;
+    color: #166534 !important;
+  }
   /* Sidebar Styles */
   #appSidebar {
     background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
@@ -708,6 +723,12 @@ function is_active($file, $alsoQueryKey = null, $alsoQueryValue = null) {
         <i class="fas fa-clock-rotate-left"></i>
         <span>Activities</span>
       </a>
+      <?php if (in_array($roleNorm, ['operation', 'admin', 'super'], true)): ?>
+      <a href="team_performance.php" class="nav-link <?php echo (is_active('team_performance.php') || is_active('team_member_events.php')) ? 'active' : ''; ?>">
+        <i class="fas fa-chart-column"></i>
+        <span>Team Performance</span>
+      </a>
+      <?php endif; ?>
     </div>
     
     <?php if ($canSeeReports): ?>

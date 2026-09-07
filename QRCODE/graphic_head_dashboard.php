@@ -48,6 +48,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $action = $_POST['action'] ?? '';
 
+    $isActiveGraphic = function ($id) use ($db) {
+        $stmt = $db->prepare("SELECT 1 FROM users WHERE id = ? AND role LIKE 'graphic%' AND is_active = 1");
+        $stmt->execute([(int)$id]);
+        return (bool)$stmt->fetchColumn();
+    };
     
 
     if ($action === 'assign_graphic') {
@@ -58,7 +63,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         
 
-        if ($requestId > 0 && $graphicId > 0) {
+        if ($requestId > 0 && $graphicId > 0 && $isActiveGraphic($graphicId)) {
 
             $stmt = $db->prepare("UPDATE graphic_requests SET assigned_to = ?, assigned_by = ?, assigned_at = NOW(), status = 'assigned' WHERE id = ?");
 
@@ -84,7 +89,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         
 
-        if ($requestId > 0 && $graphicId > 0) {
+        if ($requestId > 0 && $graphicId > 0 && $isActiveGraphic($graphicId)) {
 
             $stmt = $db->prepare("UPDATE graphic_requests SET assigned_to = ?, assigned_by = ?, assigned_at = NOW() WHERE id = ?");
 
@@ -297,7 +302,7 @@ $graphicRequests = $requestsStmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Get available graphic designers
 
-$graphicsStmt = $db->query("SELECT id, name, email FROM users WHERE role LIKE 'graphic%' ORDER BY name");
+$graphicsStmt = $db->query("SELECT id, name, email FROM users WHERE role LIKE 'graphic%' AND is_active = 1 ORDER BY name");
 
 $graphicDesigners = $graphicsStmt->fetchAll(PDO::FETCH_ASSOC);
 

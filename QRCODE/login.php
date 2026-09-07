@@ -2,7 +2,7 @@
 require __DIR__ . '/auth.php';
 require __DIR__ . '/bootstrap.php';
 $db = get_db();
-$error = '';
+$error = isset($_GET['inactive']) ? 'Your account is inactive. Contact an administrator.' : '';
 error_log('login.php: start, method=' . ($_SERVER['REQUEST_METHOD'] ?? ''));
 
 if (isset($_GET['logout'])) {
@@ -92,9 +92,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       margin: 0;
       padding: 0;
     }
+
+    button,
+    input,
+    select,
+    textarea {
+      font: inherit;
+    }
     
     body {
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
       background: radial-gradient(circle at 20% 20%, rgba(99, 102, 241, 0.35), transparent 45%),
                   radial-gradient(circle at 80% 0%, rgba(20, 184, 166, 0.3), transparent 50%),
                   #000000;
