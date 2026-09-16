@@ -461,6 +461,50 @@ function db_initialize_database_schema($pdo) {
             INDEX idx_event_actions_type (action_type)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
+        $pdo->exec("CREATE TABLE IF NOT EXISTS cashier_expenses (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            event_id INT NOT NULL,
+            source_type VARCHAR(30) NOT NULL DEFAULT 'manual',
+            source_id INT NULL,
+            description TEXT NOT NULL,
+            amount DECIMAL(12,2) NOT NULL,
+            status ENUM('unpaid','paid') NOT NULL DEFAULT 'unpaid',
+            created_by INT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            paid_at DATETIME NULL,
+            UNIQUE KEY uq_cashier_expense_source (source_type, source_id),
+            INDEX idx_cashier_expense_event (event_id),
+            INDEX idx_cashier_expense_status (status)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        $pdo->exec("CREATE TABLE IF NOT EXISTS cashier_payments (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            expense_id INT NOT NULL,
+            amount DECIMAL(12,2) NOT NULL,
+            payment_method VARCHAR(30) NOT NULL,
+            payee VARCHAR(255) NOT NULL,
+            reference_no VARCHAR(100) NULL,
+            payment_date DATE NOT NULL,
+            paid_by INT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_cashier_payment_expense (expense_id),
+            INDEX idx_cashier_payment_date (payment_date),
+            INDEX idx_cashier_payment_user (paid_by)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        $descriptionColumn = $pdo->query("SHOW COLUMNS FROM cashier_expenses LIKE 'description'")->fetch(PDO::FETCH_ASSOC);
+        if ($descriptionColumn && stripos((string)($descriptionColumn['Type'] ?? ''), 'text') === false) {
+            $pdo->exec("ALTER TABLE cashier_expenses MODIFY description TEXT NOT NULL");
+        }
+        $paymentUniqueIndex = $pdo->query("SHOW INDEX FROM cashier_payments WHERE Key_name = 'uq_cashier_payment_expense'")->fetch(PDO::FETCH_ASSOC);
+        if ($paymentUniqueIndex) {
+            $pdo->exec("ALTER TABLE cashier_payments DROP INDEX uq_cashier_payment_expense");
+        }
+        $paymentExpenseIndex = $pdo->query("SHOW INDEX FROM cashier_payments WHERE Key_name = 'idx_cashier_payment_expense'")->fetch(PDO::FETCH_ASSOC);
+        if (!$paymentExpenseIndex) {
+            $pdo->exec("ALTER TABLE cashier_payments ADD INDEX idx_cashier_payment_expense (expense_id)");
+        }
+
         // Add any missing columns to events table
         db_add_missing_columns($pdo);
 
@@ -486,7 +530,7 @@ function db_ensure_default_user($pdo) {
         $stmt = $pdo->prepare("INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)");
         $stmt->execute(['Administrator', 'admin@example.com', $default_password, 'admin']);
         
-        error_log('Default user created: admin@example.com / admin123');
+        error_log('Default administrator account created');
         return $pdo->lastInsertId();
     }
     
@@ -727,6 +771,11 @@ function db_delete_event($event_id) {
             $pdo->beginTransaction();
         }
 
+        $pdo->prepare("DELETE cp FROM cashier_payments cp JOIN cashier_expenses ce ON ce.id = cp.expense_id WHERE ce.event_id = ?")
+            ->execute([$event_id]);
+        $pdo->prepare("DELETE FROM cashier_expenses WHERE event_id = ?")
+            ->execute([$event_id]);
+
         $pdo->prepare("DELETE roi FROM release_order_items roi JOIN release_orders ro ON roi.release_order_id = ro.id WHERE ro.event_id = ?")
             ->execute([$event_id]);
         $pdo->prepare("DELETE FROM release_orders WHERE event_id = ?")
@@ -735,6 +784,16 @@ function db_delete_event($event_id) {
         $pdo->prepare("DELETE pri FROM purchase_request_items pri JOIN purchase_requests pr ON pri.purchase_request_id = pr.id WHERE pr.event_id = ?")
             ->execute([$event_id]);
         $pdo->prepare("DELETE FROM purchase_requests WHERE event_id = ?")
+            ->execute([$event_id]);
+
+        $pdo->prepare("DELETE rri FROM rental_request_items rri JOIN rental_requests rr ON rri.rental_request_id = rr.id WHERE rr.event_id = ?")
+            ->execute([$event_id]);
+        $pdo->prepare("DELETE FROM rental_requests WHERE event_id = ?")
+            ->execute([$event_id]);
+
+        $pdo->prepare("DELETE jfi FROM job_form_items jfi JOIN job_forms jf ON jfi.job_form_id = jf.id WHERE jf.event_id = ?")
+            ->execute([$event_id]);
+        $pdo->prepare("DELETE FROM job_forms WHERE event_id = ?")
             ->execute([$event_id]);
 
         $stmt = $pdo->prepare("DELETE FROM events WHERE id = ?");
@@ -893,6 +952,7 @@ function db_delete_user($user_id) {
                 'user_id',
                 'created_by',
                 'updated_by',
+                'paid_by',
                 'requested_by',
                 'reviewed_by',
                 'uploaded_by',

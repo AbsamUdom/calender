@@ -160,6 +160,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+try {
+    $graphicUserId = (int)($user['id'] ?? 0);
+    $graphicUserName = trim((string)($user['name'] ?? ''));
+    $graphicUserNameNorm = function_exists('mb_strtolower') ? mb_strtolower($graphicUserName, 'UTF-8') : strtolower($graphicUserName);
+    $assignedEventsStmt = $db->query('SELECT id, user_id, graphics, graphics_users FROM events');
+    foreach ($assignedEventsStmt ? ($assignedEventsStmt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [] as $assignedEvent) {
+        $assignedGraphicIds = json_decode((string)($assignedEvent['graphics_users'] ?? ''), true);
+        $assignedGraphicIds = is_array($assignedGraphicIds) ? array_map('intval', $assignedGraphicIds) : [];
+        $legacyGraphicName = trim((string)($assignedEvent['graphics'] ?? ''));
+        $legacyGraphicName = function_exists('mb_strtolower') ? mb_strtolower($legacyGraphicName, 'UTF-8') : strtolower($legacyGraphicName);
+        if (!in_array($graphicUserId, $assignedGraphicIds, true) && $legacyGraphicName !== $graphicUserNameNorm) {
+            continue;
+        }
+        $existingRequest = $db->prepare("SELECT id FROM graphic_requests WHERE event_id = ? AND assigned_to = ? AND status <> 'cancelled' LIMIT 1");
+        $existingRequest->execute([(int)$assignedEvent['id'], $graphicUserId]);
+        if (!$existingRequest->fetchColumn()) {
+            $requestOwnerId = (int)($assignedEvent['user_id'] ?? 0);
+            if ($requestOwnerId <= 0 || !db_is_user_active($requestOwnerId)) {
+                $requestOwnerId = $graphicUserId;
+            }
+            $insertRequest = $db->prepare("INSERT INTO graphic_requests (event_id, requested_by, assigned_to, assigned_by, status, assigned_at, notes) VALUES (?, ?, ?, ?, 'assigned', NOW(), 'Synchronized from event assignment')");
+            $insertRequest->execute([(int)$assignedEvent['id'], $requestOwnerId, $graphicUserId, $requestOwnerId]);
+        }
+    }
+} catch (Throwable $e) {
+    error_log('Graphic assignment synchronization failed: ' . $e->getMessage());
+}
+
 // Auto-complete tasks when event date has passed (for this graphic user)
 try {
     $autoComplete = $db->prepare("UPDATE graphic_requests gr JOIN events e ON gr.event_id = e.id SET gr.status = 'completed', gr.completed_at = COALESCE(gr.completed_at, NOW()) WHERE gr.assigned_to = ? AND gr.status IN ('assigned', 'in_progress') AND COALESCE(e.end_date, e.date) < CURDATE()");
@@ -222,6 +250,40 @@ $assignedCount = count(array_filter($myTasks, fn($r) => $r['status'] === 'assign
 $inProgressCount = count(array_filter($myTasks, fn($r) => $r['status'] === 'in_progress'));
 $completedCount = count(array_filter($myTasks, fn($r) => $r['status'] === 'completed'));
 $totalTasks = count($myTasks);
+$graphicAllTimeEvents = 0;
+if (in_array($roleNorm, ['graphic', 'graphics', 'graphic designer'], true)) {
+    $graphicWorkflowAssignments = [];
+    $graphicWorkflowStmt = $db->query("SELECT event_id, assigned_to FROM graphic_requests WHERE assigned_to IS NOT NULL AND status <> 'cancelled'");
+    foreach ($graphicWorkflowStmt ? ($graphicWorkflowStmt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [] as $graphicWorkflow) {
+        $workflowEventId = (int)($graphicWorkflow['event_id'] ?? 0);
+        $workflowUserId = (int)($graphicWorkflow['assigned_to'] ?? 0);
+        if ($workflowEventId > 0 && $workflowUserId > 0) {
+            $graphicWorkflowAssignments[$workflowEventId][$workflowUserId] = true;
+        }
+    }
+
+    $graphicUserId = (int)($user['id'] ?? 0);
+    $graphicUserName = trim((string)($user['name'] ?? ''));
+    $graphicUserName = function_exists('mb_strtolower') ? mb_strtolower($graphicUserName, 'UTF-8') : strtolower($graphicUserName);
+    $graphicAssignedEventIds = [];
+    $graphicEventsStmt = $db->query('SELECT id, graphics, graphics_users FROM events');
+    foreach ($graphicEventsStmt ? ($graphicEventsStmt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [] as $graphicEvent) {
+        $graphicEventId = (int)($graphicEvent['id'] ?? 0);
+        if (isset($graphicWorkflowAssignments[$graphicEventId])) {
+            $isGraphicAssigned = isset($graphicWorkflowAssignments[$graphicEventId][$graphicUserId]);
+        } else {
+            $graphicUserIds = json_decode((string)($graphicEvent['graphics_users'] ?? ''), true);
+            $graphicUserIds = is_array($graphicUserIds) ? array_values(array_unique(array_filter(array_map('intval', $graphicUserIds), fn($id) => $id > 0))) : [];
+            $legacyGraphicName = trim((string)($graphicEvent['graphics'] ?? ''));
+            $legacyGraphicName = function_exists('mb_strtolower') ? mb_strtolower($legacyGraphicName, 'UTF-8') : strtolower($legacyGraphicName);
+            $isGraphicAssigned = in_array($graphicUserId, $graphicUserIds, true) || $legacyGraphicName === $graphicUserName;
+        }
+        if ($isGraphicAssigned) {
+            $graphicAssignedEventIds[$graphicEventId] = true;
+        }
+    }
+    $graphicAllTimeEvents = count($graphicAssignedEventIds);
+}
 
 $flashes = flash_consume();
 $displayName = $user['name'] ?? $user['email'] ?? 'User';
@@ -624,6 +686,24 @@ $pageTitle = 'Graphic Team Dashboard';
                     </div>
                 </div>
             </div>
+
+            <?php if (in_array($roleNorm, ['graphic', 'graphics', 'graphic designer'], true)): ?>
+            <div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 mb-6 flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+                <div class="flex items-center gap-4 min-w-0">
+                    <div class="w-14 h-14 rounded-2xl bg-blue-100 text-blue-600 flex items-center justify-center flex-shrink-0">
+                        <i class="fas fa-user text-xl"></i>
+                    </div>
+                    <div class="min-w-0">
+                        <h2 class="text-lg font-bold text-gray-900 truncate"><?php echo htmlspecialchars((string)($user['name'] ?? 'Graphic User')); ?></h2>
+                        <p class="text-sm text-gray-500 mt-2 break-all"><?php echo htmlspecialchars((string)($user['email'] ?? '')); ?> · Graphic Team</p>
+                    </div>
+                </div>
+                <div class="bg-blue-50 rounded-2xl px-7 py-4 text-center flex-shrink-0 sm:min-w-36">
+                    <div class="text-2xl font-extrabold text-blue-700"><?php echo number_format($graphicAllTimeEvents); ?></div>
+                    <div class="text-xs font-semibold text-blue-700 mt-1">All-Time Events</div>
+                </div>
+            </div>
+            <?php endif; ?>
 
             <div class="content-section">
                 <div class="section-header">

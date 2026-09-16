@@ -95,7 +95,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_GET['account_status'])) {
     $name = trim($_POST['name'] ?? '');
     $email = trim($_POST['email'] ?? '');
     $password = $_POST['password'] ?? '';
-    $validRoles = ['super', 'admin', 'finance', 'sales', 'accountant', 'operation', 'production', 'supervisor', 'store', 'graphic'];
+    $validRoles = ['super', 'admin', 'finance', 'sales', 'accountant', 'cashier', 'operation', 'production', 'supervisor', 'store', 'graphic'];
     $role = in_array(($_POST['role'] ?? 'user'), $validRoles, true) ? $_POST['role'] : 'user';
 
     if ($currentRole === 'operation') {
@@ -128,7 +128,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_GET['account_status'])) {
     $name = trim($_POST['name'] ?? '');
     $email = trim($_POST['email'] ?? '');
     $password = $_POST['password'] ?? '';
-    $validRoles = ['super', 'admin', 'finance', 'sales', 'accountant', 'operation', 'production', 'supervisor', 'store', 'graphic'];
+    $validRoles = ['super', 'admin', 'finance', 'sales', 'accountant', 'cashier', 'operation', 'production', 'supervisor', 'store', 'graphic'];
     $role = in_array(($_POST['role'] ?? 'user'), $validRoles, true) ? $_POST['role'] : 'user';
 
     if ($currentRole === 'operation') {
@@ -975,6 +975,7 @@ foreach ($flashes as $flash) {
                 <option value="finance">Finance</option>
                 <option value="sales">Sales</option>
                 <option value="accountant">Accountant</option>
+                <option value="cashier">Cashier</option>
                 <option value="operation">Operation</option>
                 <option value="production">Production</option>
                 <option value="store">Store</option>
@@ -1023,6 +1024,7 @@ foreach ($flashes as $flash) {
                 <option value="finance" <?php echo $editUser['role'] === 'finance' ? 'selected' : ''; ?>>Finance</option>
                 <option value="sales" <?php echo $editUser['role'] === 'sales' ? 'selected' : ''; ?>>Sales</option>
                 <option value="accountant" <?php echo $editUser['role'] === 'accountant' ? 'selected' : ''; ?>>Accountant</option>
+                <option value="cashier" <?php echo $editUser['role'] === 'cashier' ? 'selected' : ''; ?>>Cashier</option>
                 <option value="operation" <?php echo $editUser['role'] === 'operation' ? 'selected' : ''; ?>>Operation</option>
                 <option value="production" <?php echo $editUser['role'] === 'production' ? 'selected' : ''; ?>>Production</option>
                 <option value="store" <?php echo $editUser['role'] === 'store' ? 'selected' : ''; ?>>Store</option>

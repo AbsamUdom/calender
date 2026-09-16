@@ -14,7 +14,8 @@ $homeDashboard = function_exists('get_dashboard_for_role') ? get_dashboard_for_r
 $roleLabel = function_exists('get_role_label') ? get_role_label($role) : ucfirst((string)$role);
 
 function is_active($file, $alsoQueryKey = null, $alsoQueryValue = null) {
-    $curr = basename(parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH));
+    $curr = preg_replace('/\.php$/i', '', basename(parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH)));
+    $file = preg_replace('/\.php$/i', '', basename((string)$file));
     if ($alsoQueryKey !== null) {
         $val = $_GET[$alsoQueryKey] ?? null;
         return ($curr === $file) && ($val === $alsoQueryValue);
@@ -603,6 +604,47 @@ function is_active($file, $alsoQueryKey = null, $alsoQueryValue = null) {
   
   <!-- Navigation Menu -->
   <nav class="nav-menu">
+    <?php if ($roleNorm === 'cashier'): ?>
+    <div class="nav-section">
+      <div class="nav-section-title">Cashier</div>
+      <a href="cashier_dashboard.php" class="nav-link <?php echo is_active('cashier_dashboard.php') && empty($_GET['section']) ? 'active' : ''; ?>">
+        <i class="fas fa-tachometer-alt"></i>
+        <span>Dashboard</span>
+      </a>
+      <a href="events.php" class="nav-link <?php echo is_active('events.php') ? 'active' : ''; ?>">
+        <i class="fas fa-calendar-check"></i>
+        <span>Events</span>
+      </a>
+      <a href="purchase_requests.php" class="nav-link <?php echo is_active('purchase_requests.php') ? 'active' : ''; ?>">
+        <i class="fas fa-cart-shopping"></i>
+        <span>Purchases</span>
+      </a>
+      <a href="rentals.php" class="nav-link <?php echo is_active('rentals.php') ? 'active' : ''; ?>">
+        <i class="fas fa-truck-ramp-box"></i>
+        <span>Rentals</span>
+      </a>
+      <a href="cashier_job_forms.php" class="nav-link <?php echo (is_active('cashier_job_forms.php') || is_active('cashier_job_form.php')) ? 'active' : ''; ?>">
+        <i class="fas fa-clipboard-list"></i>
+        <span>Job Forms</span>
+      </a>
+      <a href="activities.php" class="nav-link <?php echo is_active('activities.php') ? 'active' : ''; ?>">
+        <i class="fas fa-clock-rotate-left"></i>
+        <span>Activities</span>
+      </a>
+      <a href="calendar.php" class="nav-link <?php echo is_active('calendar.php') ? 'active' : ''; ?>">
+        <i class="fas fa-calendar"></i>
+        <span>Calendar</span>
+      </a>
+      <a href="reports.php" class="nav-link <?php echo is_active('reports.php') ? 'active' : ''; ?>">
+        <i class="fas fa-chart-line"></i>
+        <span>Reports</span>
+      </a>
+      <a href="cashier_expenses.php" class="nav-link <?php echo (is_active('cashier_expenses.php') || is_active('cashier_event_expenses.php')) ? 'active' : ''; ?>">
+        <i class="fas fa-receipt"></i>
+        <span>Expenses</span>
+      </a>
+    </div>
+    <?php else: ?>
     <div class="nav-section">
       <div class="nav-section-title">Main</div>
       <a href="<?php echo htmlspecialchars($homeDashboard); ?>" class="nav-link <?php echo is_active(basename($homeDashboard)) ? 'active' : ''; ?>">
@@ -613,6 +655,12 @@ function is_active($file, $alsoQueryKey = null, $alsoQueryValue = null) {
         <i class="fas fa-calendar-alt"></i>
         <span>Events</span>
       </a>
+      <?php if (in_array($roleNorm, ['cashier', 'admin', 'super'], true)): ?>
+      <a href="cashier_dashboard.php" class="nav-link <?php echo is_active('cashier_dashboard.php') ? 'active' : ''; ?>">
+        <i class="fas fa-cash-register"></i>
+        <span>Cashier</span>
+      </a>
+      <?php endif; ?>
       <?php if (in_array(strtolower((string)$role), ['finance', 'admin', 'super'], true)): ?>
       <a href="finance_quotes.php" class="nav-link <?php echo is_active('finance_quotes.php') ? 'active' : ''; ?>">
         <i class="fas fa-file-invoice-dollar"></i>
@@ -745,6 +793,7 @@ function is_active($file, $alsoQueryKey = null, $alsoQueryValue = null) {
       </a>
       <?php endif; ?>
     </div>
+    <?php endif; ?>
     <?php endif; ?>
   </nav>
 

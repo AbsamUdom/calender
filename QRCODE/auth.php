@@ -124,7 +124,7 @@ function login_user($email, $password) {
         }
         
         // Ensure role is set and valid
-        $valid_roles = ['super', 'admin', 'finance', 'sales', 'accountant', 'operation', 'production', 'supervisor', 'store', 'graphic'];
+        $valid_roles = ['super', 'admin', 'finance', 'sales', 'accountant', 'cashier', 'operation', 'production', 'supervisor', 'store', 'graphic'];
         $role = strtolower((string)($user['role'] ?? 'user'));
         if ($role === 'head_sales') {
             $role = 'sales';
@@ -275,6 +275,7 @@ function has_role($required_role) {
         'finance' => 1,
         'sales' => 1,
         'accountant' => 1,
+        'cashier' => 1,
         'operation' => 1,
         'production' => 1,
         'supervisor' => 1,
@@ -298,6 +299,7 @@ function get_role_label($role) {
         'finance' => 'Finance',
         'sales' => 'Sales',
         'accountant' => 'Accountant',
+        'cashier' => 'Cashier',
         'operation' => 'Operations',
         'production' => 'Production',
         'supervisor' => 'Supervisor',
@@ -332,6 +334,7 @@ function get_dashboard_for_role($role) {
         'graphics' => 'graphic_dashboard.php',
         'graphic designer' => 'graphic_dashboard.php',
         'accountant' => 'account_dashboard.php',
+        'cashier' => 'cashier_dashboard.php',
         'operation' => 'operation_dashboard.php',
         'production' => 'production_dashboard.php',
         'supervisor' => 'supervisor_dashboard.php',

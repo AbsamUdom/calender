@@ -15,8 +15,9 @@ $role = strtolower($user['role'] ?? 'user');
 
 $canAccountant = in_array($role, ['accountant', 'admin', 'super'], true);
 $canFinance = in_array($role, ['finance', 'admin', 'super'], true);
+$isCashier = $role === 'cashier';
 
-if (!$canAccountant && !$canFinance) {
+if (!$canAccountant && !$canFinance && !$isCashier) {
     header('Location: index.php');
     exit;
 }
@@ -29,6 +30,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
 
     try {
+        if ($isCashier) {
+            throw new Exception('Cashier access to rentals is read-only');
+        }
         if ($action === 'create_rental') {
             if (!$canAccountant) {
                 throw new Exception('You do not have permission to create rentals');
@@ -216,7 +220,7 @@ try {
 
 $myRentals = [];
 try {
-    if ($canFinance || $role === 'admin' || $role === 'super') {
+    if ($canFinance || $isCashier || $role === 'admin' || $role === 'super') {
         $stmt = $db->query("SELECT rr.*, e.name AS event_name, e.client AS event_client FROM rental_requests rr LEFT JOIN events e ON rr.event_id = e.id ORDER BY rr.created_at DESC, rr.id DESC");
         $myRentals = $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
     } else {

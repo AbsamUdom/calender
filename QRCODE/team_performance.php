@@ -84,7 +84,7 @@ if (in_array($selectedTeam, ['graphic', 'supervisor'], true)) {
     }
 }
 
-$eventsStmt = $db->query('SELECT id, date, coordinator_id, coordinator, coordinators, graphics, graphics_users, supervisor, supervisors FROM events');
+$eventsStmt = $db->query('SELECT id, date, amount, coordinator_id, coordinator, coordinators, graphics, graphics_users, supervisor, supervisors FROM events');
 $events = $eventsStmt ? ($eventsStmt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
 foreach ($events as $event) {
     $eventId = (int)$event['id'];
@@ -127,13 +127,13 @@ foreach ($events as $event) {
 
     foreach (array_unique(array_map('intval', $assignedIds)) as $memberId) {
         if (isset($memberIds[$memberId])) {
-            $assignments[$memberId][$eventId] = $event['date'] ?? null;
+            $assignments[$memberId][$eventId] = ['date' => $event['date'] ?? null, 'amount' => (float)($event['amount'] ?? 0)];
         }
     }
     foreach ($legacyNames as $legacyName) {
         $memberId = $memberIdsByName[$normalizeName($legacyName)] ?? 0;
         if ($memberId > 0) {
-            $assignments[$memberId][$eventId] = $event['date'] ?? null;
+            $assignments[$memberId][$eventId] = ['date' => $event['date'] ?? null, 'amount' => (float)($event['amount'] ?? 0)];
         }
     }
 }
@@ -146,16 +146,24 @@ $monthEnd = $today->modify('last day of this month');
 $yearStart = $today->setDate((int)$today->format('Y'), 1, 1);
 $yearEnd = $today->setDate((int)$today->format('Y'), 12, 31);
 
-$countEvents = static function ($eventDates, ?DateTimeImmutable $start = null, ?DateTimeImmutable $end = null) {
+$eventInPeriod = static function ($event, ?DateTimeImmutable $start = null, ?DateTimeImmutable $end = null) {
     if ($start === null || $end === null) {
-        return count($eventDates);
+        return true;
     }
-    $startValue = $start->format('Y-m-d');
-    $endValue = $end->format('Y-m-d');
-    return count(array_filter($eventDates, static function ($date) use ($startValue, $endValue) {
-        $date = (string)$date;
-        return $date !== '' && $date >= $startValue && $date <= $endValue;
-    }));
+    $date = (string)($event['date'] ?? '');
+    return $date !== '' && $date >= $start->format('Y-m-d') && $date <= $end->format('Y-m-d');
+};
+$countEvents = static function ($events, ?DateTimeImmutable $start = null, ?DateTimeImmutable $end = null) use ($eventInPeriod) {
+    return count(array_filter($events, static fn($event) => $eventInPeriod($event, $start, $end)));
+};
+$sumEventAmounts = static function ($events, ?DateTimeImmutable $start = null, ?DateTimeImmutable $end = null) use ($eventInPeriod) {
+    $amount = 0.0;
+    foreach ($events as $event) {
+        if ($eventInPeriod($event, $start, $end)) {
+            $amount += (float)($event['amount'] ?? 0);
+        }
+    }
+    return $amount;
 };
 
 $rows = [];
@@ -171,18 +179,26 @@ foreach ($members as $member) {
         'name' => $member['name'] ?? '',
         'email' => $member['email'] ?? '',
         'week' => $countEvents($eventDates, $weekStart, $weekEnd),
+        'week_amount' => $sumEventAmounts($eventDates, $weekStart, $weekEnd),
         'month' => $countEvents($eventDates, $monthStart, $monthEnd),
+        'month_amount' => $sumEventAmounts($eventDates, $monthStart, $monthEnd),
         'year' => $countEvents($eventDates, $yearStart, $yearEnd),
+        'year_amount' => $sumEventAmounts($eventDates, $yearStart, $yearEnd),
         'all' => $countEvents($eventDates),
+        'all_amount' => $sumEventAmounts($eventDates),
     ];
 }
 usort($rows, static fn($a, $b) => ($b['all'] <=> $a['all']) ?: strcasecmp((string)$a['name'], (string)$b['name']));
 
 $totals = [
     'week' => $countEvents($teamEvents, $weekStart, $weekEnd),
+    'week_amount' => $sumEventAmounts($teamEvents, $weekStart, $weekEnd),
     'month' => $countEvents($teamEvents, $monthStart, $monthEnd),
+    'month_amount' => $sumEventAmounts($teamEvents, $monthStart, $monthEnd),
     'year' => $countEvents($teamEvents, $yearStart, $yearEnd),
+    'year_amount' => $sumEventAmounts($teamEvents, $yearStart, $yearEnd),
     'all' => $countEvents($teamEvents),
+    'all_amount' => $sumEventAmounts($teamEvents),
 ];
 $displayName = $user['name'] ?? $user['email'] ?? 'User';
 $teamLabel = $teams[$selectedTeam]['label'];
@@ -257,10 +273,10 @@ $teamLabel = $teams[$selectedTeam]['label'];
         <?php endif; ?>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-6">
-            <div class="period-card bg-gradient-to-br from-blue-500 to-blue-600"><p>This Week</p><strong><?php echo number_format($totals['week']); ?></strong><span class="text-xs opacity-80"><?php echo $weekStart->format('M j'); ?> – <?php echo $weekEnd->format('M j'); ?> · unique events</span></div>
-            <div class="period-card bg-gradient-to-br from-violet-500 to-violet-600"><p>This Month</p><strong><?php echo number_format($totals['month']); ?></strong><span class="text-xs opacity-80"><?php echo $monthStart->format('F Y'); ?> · unique events</span></div>
-            <div class="period-card bg-gradient-to-br from-emerald-500 to-emerald-600"><p>This Year</p><strong><?php echo number_format($totals['year']); ?></strong><span class="text-xs opacity-80"><?php echo $yearStart->format('Y'); ?> · unique events</span></div>
-            <div class="period-card bg-gradient-to-br from-slate-700 to-slate-900"><p>All Time</p><strong><?php echo number_format($totals['all']); ?></strong><span class="text-xs opacity-80">Unique team events</span></div>
+            <div class="period-card bg-gradient-to-br from-blue-500 to-blue-600"><p>This Week</p><strong><?php echo number_format($totals['week']); ?></strong><span class="text-xs opacity-80"><?php echo $weekStart->format('M j'); ?> – <?php echo $weekEnd->format('M j'); ?> · unique events</span><?php if ($selectedTeam === 'sales'): ?><div class="mt-3 pt-3 border-t border-white border-opacity-20 text-sm font-bold">TSh <?php echo number_format($totals['week_amount'], 2); ?></div><?php endif; ?></div>
+            <div class="period-card bg-gradient-to-br from-violet-500 to-violet-600"><p>This Month</p><strong><?php echo number_format($totals['month']); ?></strong><span class="text-xs opacity-80"><?php echo $monthStart->format('F Y'); ?> · unique events</span><?php if ($selectedTeam === 'sales'): ?><div class="mt-3 pt-3 border-t border-white border-opacity-20 text-sm font-bold">TSh <?php echo number_format($totals['month_amount'], 2); ?></div><?php endif; ?></div>
+            <div class="period-card bg-gradient-to-br from-emerald-500 to-emerald-600"><p>This Year</p><strong><?php echo number_format($totals['year']); ?></strong><span class="text-xs opacity-80"><?php echo $yearStart->format('Y'); ?> · unique events</span><?php if ($selectedTeam === 'sales'): ?><div class="mt-3 pt-3 border-t border-white border-opacity-20 text-sm font-bold">TSh <?php echo number_format($totals['year_amount'], 2); ?></div><?php endif; ?></div>
+            <div class="period-card bg-gradient-to-br from-slate-700 to-slate-900"><p>All Time</p><strong><?php echo number_format($totals['all']); ?></strong><span class="text-xs opacity-80">Unique team events</span><?php if ($selectedTeam === 'sales'): ?><div class="mt-3 pt-3 border-t border-white border-opacity-20 text-sm font-bold">TSh <?php echo number_format($totals['all_amount'], 2); ?></div><?php endif; ?></div>
         </div>
 
         <section class="performance-card">
@@ -278,10 +294,10 @@ $teamLabel = $teams[$selectedTeam]['label'];
                         <tr>
                             <td class="member-name"><?php echo htmlspecialchars((string)$row['name']); ?></td>
                             <td class="member-email"><?php echo htmlspecialchars((string)$row['email']); ?></td>
-                            <td><span class="count-badge"><?php echo number_format($row['week']); ?></span></td>
-                            <td><span class="count-badge"><?php echo number_format($row['month']); ?></span></td>
-                            <td><span class="count-badge"><?php echo number_format($row['year']); ?></span></td>
-                            <td><span class="count-badge"><?php echo number_format($row['all']); ?></span></td>
+                            <td><span class="count-badge"><?php echo number_format($row['week']); ?></span><?php if ($selectedTeam === 'sales'): ?><div class="member-email" style="margin-top:6px;white-space:nowrap;">TSh <?php echo number_format($row['week_amount'], 2); ?></div><?php endif; ?></td>
+                            <td><span class="count-badge"><?php echo number_format($row['month']); ?></span><?php if ($selectedTeam === 'sales'): ?><div class="member-email" style="margin-top:6px;white-space:nowrap;">TSh <?php echo number_format($row['month_amount'], 2); ?></div><?php endif; ?></td>
+                            <td><span class="count-badge"><?php echo number_format($row['year']); ?></span><?php if ($selectedTeam === 'sales'): ?><div class="member-email" style="margin-top:6px;white-space:nowrap;">TSh <?php echo number_format($row['year_amount'], 2); ?></div><?php endif; ?></td>
+                            <td><span class="count-badge"><?php echo number_format($row['all']); ?></span><?php if ($selectedTeam === 'sales'): ?><div class="member-email" style="margin-top:6px;white-space:nowrap;">TSh <?php echo number_format($row['all_amount'], 2); ?></div><?php endif; ?></td>
                             <td><a class="view-member" href="team_member_events.php?team=<?php echo urlencode($selectedTeam); ?>&amp;user_id=<?php echo (int)$row['id']; ?>" title="View all events" aria-label="View all events for <?php echo htmlspecialchars((string)$row['name']); ?>"><i class="fas fa-eye"></i></a></td>
                         </tr>
                     <?php endforeach; ?>

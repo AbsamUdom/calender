@@ -13,7 +13,8 @@ $db = get_db();
 $user = current_user();
 $role = strtolower($user['role'] ?? 'user');
 
-if (!in_array($role, ['operation', 'admin', 'super'], true)) {
+$cashierPrintView = $role === 'cashier' && ($_GET['view'] ?? '') === 'print' && (int)($_GET['job_form_id'] ?? 0) > 0;
+if (!in_array($role, ['operation', 'admin', 'super'], true) && !$cashierPrintView) {
     header('Location: index.php');
     exit;
 }
@@ -359,6 +360,17 @@ try {
 } catch (Throwable $e) {
     $myForms = [];
 }
+$formStats = ['total' => count($myForms), 'draft' => 0, 'review' => 0, 'approved' => 0];
+foreach ($myForms as $form) {
+    $formStatus = (string)($form['status'] ?? 'draft');
+    if (in_array($formStatus, ['draft', 'coordinator_rejected', 'finance_rejected'], true)) {
+        $formStats['draft']++;
+    } elseif ($formStatus === 'finance_approved') {
+        $formStats['approved']++;
+    } else {
+        $formStats['review']++;
+    }
+}
 
 $defaultRows = 12;
 $defaultRowNames = [
@@ -388,7 +400,28 @@ if ($editLabourRows) {
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="style.css">
     <style>
-        .jf-hidden { display: none !important; }
+        .jf-hidden { display:none !important; }
+        .jf-editor { padding:0; overflow:hidden; border-radius:16px; box-shadow:0 1px 3px rgba(15,23,42,.06); }
+        .jf-editor > .section-header { padding:18px 20px; margin:0; border-bottom:1px solid #e2e8f0; background:linear-gradient(135deg,#f8fafc,#fff); }
+        .jf-editor form { padding:20px; }
+        .jf-form-stack { display:grid; grid-template-columns:1fr; gap:20px; }
+        .jf-panel { border:1px solid #e2e8f0; border-radius:14px; padding:18px; background:#fff; }
+        .jf-document-panel { background:linear-gradient(135deg,#eff6ff 0%,#fff 55%); border-color:#bfdbfe; }
+        .jf-step-title { display:flex; align-items:center; gap:10px; margin:0 0 14px; color:#0f172a; font-size:1rem; font-weight:800; }
+        .jf-step-number { width:28px; height:28px; display:inline-flex; align-items:center; justify-content:center; border-radius:9px; background:#2563eb; color:#fff; font-size:.78rem; }
+        .jf-shift-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; grid-column:1/-1; }
+        .jf-shift-box { padding:12px; border:1px solid #e2e8f0; border-radius:12px; background:#f8fafc; }
+        .jf-shift-inputs { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:7px; }
+        .jf-actions { display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap; padding:16px 18px; border:1px solid #bfdbfe; border-radius:14px; background:#eff6ff; position:sticky; bottom:10px; z-index:5; }
+        .jf-history { border-radius:16px; overflow:hidden; box-shadow:0 1px 3px rgba(15,23,42,.06); }
+        .jf-status { display:inline-flex; padding:5px 9px; border-radius:999px; font-size:.72rem; font-weight:700; text-transform:capitalize; }
+        .jf-status-draft { background:#f1f5f9; color:#475569; }
+        .jf-status-review { background:#fef3c7; color:#92400e; }
+        .jf-status-approved { background:#dcfce7; color:#166534; }
+        .jf-status-rejected { background:#fee2e2; color:#991b1b; }
+        .jf-action-link { display:inline-flex; align-items:center; justify-content:center; gap:5px; padding:6px 9px; border-radius:8px; background:#eff6ff; color:#1d4ed8; font-size:.75rem; font-weight:700; text-decoration:none; }
+        @media (max-width:768px) { .jf-shift-grid { grid-template-columns:1fr; } .jf-editor form { padding:14px; } .jf-panel { padding:14px; } .jf-actions { position:static; } }
+        @media (max-width:520px) { .jf-shift-inputs { grid-template-columns:1fr; } }
     </style>
 </head>
 <body>
@@ -424,11 +457,18 @@ if ($editLabourRows) {
             </div>
         <?php endforeach; ?>
 
-        <div class="content-section">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
+            <div class="bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl p-5 text-white shadow"><div class="flex justify-between items-start"><div><p class="text-sm text-blue-100">My Job Forms</p><p class="text-2xl font-bold mt-1"><?php echo number_format($formStats['total']); ?></p></div><div class="p-3 bg-white bg-opacity-20 rounded-xl"><i class="fas fa-file-lines"></i></div></div></div>
+            <div class="bg-gradient-to-br from-slate-500 to-slate-600 rounded-2xl p-5 text-white shadow"><div class="flex justify-between items-start"><div><p class="text-sm text-slate-100">Draft / Returned</p><p class="text-2xl font-bold mt-1"><?php echo number_format($formStats['draft']); ?></p></div><div class="p-3 bg-white bg-opacity-20 rounded-xl"><i class="fas fa-pen-to-square"></i></div></div></div>
+            <div class="bg-gradient-to-br from-amber-500 to-orange-500 rounded-2xl p-5 text-white shadow"><div class="flex justify-between items-start"><div><p class="text-sm text-amber-100">Under Review</p><p class="text-2xl font-bold mt-1"><?php echo number_format($formStats['review']); ?></p></div><div class="p-3 bg-white bg-opacity-20 rounded-xl"><i class="fas fa-hourglass-half"></i></div></div></div>
+            <div class="bg-gradient-to-br from-emerald-500 to-green-600 rounded-2xl p-5 text-white shadow"><div class="flex justify-between items-start"><div><p class="text-sm text-emerald-100">Finance Approved</p><p class="text-2xl font-bold mt-1"><?php echo number_format($formStats['approved']); ?></p></div><div class="p-3 bg-white bg-opacity-20 rounded-xl"><i class="fas fa-circle-check"></i></div></div></div>
+        </div>
+
+        <div class="content-section jf-editor">
             <div class="section-header" style="align-items:center;">
-                <h2 class="section-title"><?php echo $edit ? 'Edit Job Form' : 'Create Job Form'; ?></h2>
+                <div><h2 class="section-title"><?php echo $edit ? 'Edit Job Form' : 'Create Job Form'; ?></h2><p style="margin:4px 0 0;color:#64748b;font-size:.8rem;">Complete the sections below, save a draft, or submit it to the assigned Coordinator.</p></div>
                 <?php if ($edit && (int)($edit['id'] ?? 0) > 0): ?>
-                    <a class="btn btn-secondary" target="_blank" href="job_forms.php?view=print&amp;job_form_id=<?php echo (int)($edit['id'] ?? 0); ?>">Print</a>
+                    <div class="flex gap-2"><a class="btn btn-secondary" href="job_forms.php">Cancel Edit</a><a class="btn btn-secondary" target="_blank" href="job_forms.php?view=print&amp;job_form_id=<?php echo (int)($edit['id'] ?? 0); ?>"><i class="fas fa-print mr-1"></i> Print</a></div>
                 <?php endif; ?>
             </div>
 
@@ -437,8 +477,8 @@ if ($editLabourRows) {
                 <input type="hidden" name="action" value="create_or_update">
                 <input type="hidden" name="job_form_id" value="<?php echo (int)($edit['id'] ?? 0); ?>">
 
-                <div style="display:grid; grid-template-columns: 1fr; gap: 0.75rem;">
-                    <div style="display:grid; grid-template-columns: 1fr; gap: 0.75rem; border:1px solid #e2e8f0; border-radius: 12px; padding: 0.75rem; background:#fff;">
+                <div class="jf-form-stack">
+                    <div class="jf-panel jf-document-panel" style="display:grid;grid-template-columns:1fr;gap:14px;">
                         <div style="display:flex; align-items:flex-start; justify-content:space-between; gap: 1rem; flex-wrap:wrap;">
                             <div>
                                 <div style="font-size: 1.25rem; font-weight: 800; letter-spacing: 0.08em;">JOB FORM</div>
@@ -474,7 +514,8 @@ if ($editLabourRows) {
                         </div>
                     </div>
 
-                    <div>
+                    <section class="jf-panel">
+                        <h3 class="jf-step-title"><span class="jf-step-number">1</span> Select Event</h3>
                         <label class="form-label">Event</label>
                         <select class="form-select" name="event_id" id="eventSelect" required>
                             <option value="">Select event</option>
@@ -497,8 +538,8 @@ if ($editLabourRows) {
                             }
                             ?>
                         </select>
-                        <div class="text-xs" style="color:#64748b; margin-top:0.25rem;">Only events with an assigned Coordinator can have a Job Form.</div>
-                    </div>
+                        <div class="text-xs" style="color:#64748b; margin-top:0.5rem;">Only events with an assigned Coordinator can have a Job Form.</div>
+                    </section>
 
                     <?php
                     $categories = ['Florist','Electrician','Carpenter','Any/Artisy','Employed','Casuals','AOB'];
@@ -522,12 +563,10 @@ if ($editLabourRows) {
                     }
                     ?>
 
-                    <div class="section-header" style="margin-bottom: 0.75rem; padding-bottom: 0.75rem;">
-                        <h3 class="section-title" style="margin: 0;">Add Labour Entry</h3>
-                    </div>
-
-                    <div style="border:1px solid #e5e7eb;border-radius:12px; background:#fff; padding:0.75rem; margin-bottom:0.75rem;">
-                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem;">
+                    <section class="jf-panel">
+                        <h3 class="jf-step-title"><span class="jf-step-number">2</span> Add Labour Entry</h3>
+                        <p style="margin:-8px 0 16px;color:#64748b;font-size:.8rem;">Enter the worker, shift costs, advance, and signature, then add the row to the Job Form.</p>
+                        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px;">
                             <div class="form-group">
                                 <label class="form-label">Category *</label>
                                 <select class="form-select" id="jfAddCategory">
@@ -542,40 +581,42 @@ if ($editLabourRows) {
                                 <input class="form-input" id="jfQuickName" placeholder="Person name">
                             </div>
 
-                            <div class="form-group" style="grid-column: 1 / -1;">
-                                <label class="form-label">Shift 1 (Job / Food / Transport)</label>
-                                <div style="display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap:0.5rem;">
+                            <div class="jf-shift-grid">
+                            <div class="form-group jf-shift-box">
+                                <label class="form-label">Shift 1</label>
+                                <div class="jf-shift-inputs">
                                     <input class="form-input" id="jfQuickS1Job" placeholder="Job">
                                     <input class="form-input" id="jfQuickS1Food" placeholder="Food">
                                     <input class="form-input" id="jfQuickS1Transport" placeholder="Transport">
                                 </div>
                             </div>
 
-                            <div class="form-group" style="grid-column: 1 / -1;">
-                                <label class="form-label">Shift 2 (Job / Food / Transport)</label>
-                                <div style="display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap:0.5rem;">
+                            <div class="form-group jf-shift-box">
+                                <label class="form-label">Shift 2</label>
+                                <div class="jf-shift-inputs">
                                     <input class="form-input" id="jfQuickS2Job" placeholder="Job">
                                     <input class="form-input" id="jfQuickS2Food" placeholder="Food">
                                     <input class="form-input" id="jfQuickS2Transport" placeholder="Transport">
                                 </div>
                             </div>
 
-                            <div class="form-group" style="grid-column: 1 / -1;">
-                                <label class="form-label">Shift 3 (Job / Food / Transport)</label>
-                                <div style="display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap:0.5rem;">
+                            <div class="form-group jf-shift-box">
+                                <label class="form-label">Shift 3</label>
+                                <div class="jf-shift-inputs">
                                     <input class="form-input" id="jfQuickS3Job" placeholder="Job">
                                     <input class="form-input" id="jfQuickS3Food" placeholder="Food">
                                     <input class="form-input" id="jfQuickS3Transport" placeholder="Transport">
                                 </div>
                             </div>
 
-                            <div class="form-group" style="grid-column: 1 / -1;">
-                                <label class="form-label">Shift 4 (Job / Food / Transport)</label>
-                                <div style="display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap:0.5rem;">
+                            <div class="form-group jf-shift-box">
+                                <label class="form-label">Shift 4</label>
+                                <div class="jf-shift-inputs">
                                     <input class="form-input" id="jfQuickS4Job" placeholder="Job">
                                     <input class="form-input" id="jfQuickS4Food" placeholder="Food">
                                     <input class="form-input" id="jfQuickS4Transport" placeholder="Transport">
                                 </div>
+                            </div>
                             </div>
 
                             <div class="form-group">
@@ -592,13 +633,14 @@ if ($editLabourRows) {
                         <div class="flex gap-2" style="margin-top: 1rem; flex-wrap: wrap; justify-content:flex-end;">
                             <button type="button" class="btn btn-primary" id="jfAddRow"><i class="fas fa-plus mr-1"></i> Add Labour</button>
                         </div>
+                    </section>
+
+                    <section class="jf-panel" style="padding:0;overflow:hidden;">
+                    <div style="padding:18px;border-bottom:1px solid #e2e8f0;display:flex;align-items:center;justify-content:space-between;gap:12px;">
+                        <div><h3 class="jf-step-title" style="margin:0;"><span class="jf-step-number">3</span> Labour Added</h3><p style="margin:5px 0 0;color:#64748b;font-size:.8rem;">Review and edit all worker costs before saving or submitting.</p></div>
                     </div>
 
-                    <div class="section-header" style="margin-bottom: 0.75rem; padding-bottom: 0.75rem;">
-                        <h3 class="section-title" style="margin: 0;">Labour Added</h3>
-                    </div>
-
-                    <div class="overflow-x-auto" style="border:1px solid #e5e7eb;border-radius:12px; background:#fff;">
+                    <div class="overflow-x-auto" style="background:#fff;">
                         <table class="w-full" style="min-width: 1200px;">
                             <thead>
                             <tr class="border-b border-gray-200" style="background:#f1f5f9;">
@@ -737,33 +779,37 @@ if ($editLabourRows) {
                             <td class="py-3 px-4 text-right"><button type="button" class="btn btn-sm btn-secondary jf-remove-row"><i class="fas fa-minus"></i></button></td>
                         </tr>
                     </template>
+                    </section>
 
-                    <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
-                        <button type="submit" name="save_mode" value="draft" class="btn btn-secondary">Save Draft</button>
-                        <button type="submit" name="save_mode" value="submit" class="btn btn-primary">Submit to Coordinator</button>
-                    </div>
+                    <section class="jf-panel">
+                        <h3 class="jf-step-title"><span class="jf-step-number">4</span> Handover Information</h3>
+                        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;">
+                            <div>
+                                <label class="form-label">Received By</label>
+                                <input class="form-input" name="received_by" value="<?php echo htmlspecialchars((string)($edit['received_by'] ?? '')); ?>" placeholder="Name of receiver">
+                            </div>
+                            <div>
+                                <label class="form-label">Given By</label>
+                                <input class="form-input" name="given_by" value="<?php echo htmlspecialchars((string)($edit['given_by'] ?? '')); ?>" placeholder="Name of issuer">
+                            </div>
+                            <div>
+                                <label class="form-label">Approved By</label>
+                                <input class="form-input" name="approved_by" value="<?php echo htmlspecialchars((string)($edit['approved_by'] ?? '')); ?>" placeholder="Approver name">
+                            </div>
+                        </div>
+                    </section>
 
-                    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.75rem; border:1px solid #e2e8f0; border-radius: 12px; padding: 0.75rem; background:#fff;">
-                        <div>
-                            <label class="form-label">Received By</label>
-                            <input class="form-input" name="received_by" value="<?php echo htmlspecialchars((string)($edit['received_by'] ?? '')); ?>" placeholder="Received by">
-                        </div>
-                        <div>
-                            <label class="form-label">Given By</label>
-                            <input class="form-input" name="given_by" value="<?php echo htmlspecialchars((string)($edit['given_by'] ?? '')); ?>" placeholder="Given by">
-                        </div>
-                        <div>
-                            <label class="form-label">Approved By</label>
-                            <input class="form-input" name="approved_by" value="<?php echo htmlspecialchars((string)($edit['approved_by'] ?? '')); ?>" placeholder="Approved by">
-                        </div>
+                    <div class="jf-actions">
+                        <button type="submit" name="save_mode" value="draft" class="btn btn-secondary"><i class="fas fa-floppy-disk mr-1"></i> Save Draft</button>
+                        <button type="submit" name="save_mode" value="submit" class="btn btn-primary"><i class="fas fa-paper-plane mr-1"></i> Submit to Coordinator</button>
                     </div>
                 </div>
             </form>
         </div>
 
-        <div class="content-section">
+        <div class="content-section jf-history">
             <div class="section-header">
-                <h2 class="section-title">My Job Forms</h2>
+                <div><h2 class="section-title">My Job Forms</h2><p style="margin:4px 0 0;color:#64748b;font-size:.8rem;">Track drafts, Coordinator review, Finance review, and approved Job Forms.</p></div>
             </div>
             <div class="table-container">
                 <table class="data-table">
@@ -783,17 +829,14 @@ if ($editLabourRows) {
                             <td><?php echo (int)$sn; ?></td>
                             <td><?php echo htmlspecialchars((string)($jf['event_name'] ?? '')); ?></td>
                             <td><?php echo htmlspecialchars((string)($jf['coordinator_name'] ?? '')); ?></td>
-                            <td><?php echo htmlspecialchars((string)($jf['status'] ?? '')); ?></td>
+                            <?php $historyStatus = (string)($jf['status'] ?? 'draft'); $statusClass = $historyStatus === 'finance_approved' ? 'jf-status-approved' : (strpos($historyStatus, 'rejected') !== false ? 'jf-status-rejected' : ($historyStatus === 'draft' ? 'jf-status-draft' : 'jf-status-review')); ?>
+                            <td><span class="jf-status <?php echo $statusClass; ?>"><?php echo htmlspecialchars(ucwords(str_replace('_', ' ', $historyStatus))); ?></span></td>
                             <td><?php echo htmlspecialchars((string)($jf['created_at'] ?? '')); ?></td>
                             <td>
-                                <?php if (in_array((string)($jf['status'] ?? ''), ['draft','coordinator_rejected','finance_rejected'], true)): ?>
-                                    <a class="link-highlight" href="job_forms.php?action=edit&amp;job_form_id=<?php echo (int)$jf['id']; ?>">Edit</a>
-                                    <span class="text-slate-300"> | </span>
-                                <?php else: ?>
-                                    <span class="text-slate-400">-</span>
-                                    <span class="text-slate-300"> </span>
+                                <div class="flex gap-2 flex-wrap"><?php if (in_array((string)($jf['status'] ?? ''), ['draft','coordinator_rejected','finance_rejected'], true)): ?>
+                                    <a class="jf-action-link" href="job_forms.php?action=edit&amp;job_form_id=<?php echo (int)$jf['id']; ?>"><i class="fas fa-pen"></i> Edit</a>
                                 <?php endif; ?>
-                                <a class="link-highlight" target="_blank" href="job_forms.php?view=print&amp;job_form_id=<?php echo (int)$jf['id']; ?>">Print</a>
+                                <a class="jf-action-link" target="_blank" href="job_forms.php?view=print&amp;job_form_id=<?php echo (int)$jf['id']; ?>"><i class="fas fa-print"></i> Print</a></div>
                             </td>
                         </tr>
                     <?php $sn++; endforeach; ?>

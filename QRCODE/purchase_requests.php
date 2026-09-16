@@ -13,7 +13,7 @@ $db = get_db();
 $user = current_user();
 $role = strtolower($user['role'] ?? 'user');
 
-if (!in_array($role, ['finance', 'store', 'production', 'operation', 'accountant', 'admin', 'super'], true)) {
+if (!in_array($role, ['finance', 'store', 'production', 'operation', 'accountant', 'cashier', 'admin', 'super'], true)) {
     header('Location: index.php');
     exit;
 }
@@ -55,6 +55,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
 
     try {
+        if ($role === 'cashier') {
+            throw new Exception('Cashier access to purchase requests is read-only');
+        }
         if ($action === 'create_purchase') {
             if ($role === 'finance') {
                 throw new Exception('You do not have permission to create purchase requests');
@@ -434,7 +437,7 @@ try {
 
 $purchaseRequests = [];
 try {
-    $stmt = $db->prepare("SELECT pr.*, e.name AS event_name, e.client AS event_client FROM purchase_requests pr LEFT JOIN events e ON pr.event_id = e.id WHERE pr.requested_by = ? OR ? IN ('admin','super','finance','accountant') ORDER BY pr.created_at DESC, pr.id DESC");
+    $stmt = $db->prepare("SELECT pr.*, e.name AS event_name, e.client AS event_client FROM purchase_requests pr LEFT JOIN events e ON pr.event_id = e.id WHERE pr.requested_by = ? OR ? IN ('admin','super','finance','accountant','cashier') ORDER BY pr.created_at DESC, pr.id DESC");
     $stmt->execute([(int)($user['id'] ?? 0), $role]);
     $purchaseRequests = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 } catch (Throwable $e) {
@@ -621,7 +624,7 @@ $flashes = flash_consume();
         </div>
         <?php endif; ?>
 
-        <?php if ($role !== 'finance'): ?>
+        <?php if (!in_array($role, ['finance', 'cashier'], true)): ?>
         <div class="content-section">
             <div class="section-header">
                 <h2 class="section-title"><?php echo $editPurchaseRequest ? 'Edit Purchase Request' : 'Create Purchase Request'; ?></h2>

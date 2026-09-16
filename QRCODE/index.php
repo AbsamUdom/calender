@@ -39,6 +39,10 @@ if ($role === 'accountant') {
     header('Location: account_dashboard.php');
     exit;
 }
+if ($role === 'cashier') {
+    header('Location: cashier_dashboard.php');
+    exit;
+}
 if ($role === 'store') {
     header('Location: store_dashboard.php');
     exit;
@@ -250,7 +254,7 @@ try {
         $quoteWhereParts[] = '(user_id = ? OR coordinator_id = ? OR coordinators REGEXP ?)';
         $quoteParams[] = $currentUserId;
         $quoteParams[] = $currentUserId;
-        $quoteParams[] = '(^|\\[|,)\\s*' . $currentUserId . '\\s*(,|\\])';
+        $quoteParams[] = '(^|\\[|,)[[:space:]]*' . $currentUserId . '[[:space:]]*(,|\\])';
     }
     if ($quoteFilter !== 'all') {
         $quoteWhereParts[] = 'LOWER(COALESCE(quote_status, \'pending\')) = ?';
@@ -268,7 +272,7 @@ try {
         $quoteCountsWhereParts[] = '(user_id = ? OR coordinator_id = ? OR coordinators REGEXP ?)';
         $quoteCountsParams[] = $currentUserId;
         $quoteCountsParams[] = $currentUserId;
-        $quoteCountsParams[] = '(^|\\[|,)\\s*' . $currentUserId . '\\s*(,|\\])';
+        $quoteCountsParams[] = '(^|\\[|,)[[:space:]]*' . $currentUserId . '[[:space:]]*(,|\\])';
     }
     $quoteCountsWhereSql = '';
     if (!empty($quoteCountsWhereParts)) {
@@ -291,8 +295,10 @@ try {
         $nextWhere = '((end_date IS NOT NULL AND end_date >= CURDATE()) OR (end_date IS NULL AND date >= CURDATE()))';
         $nextParams = [];
     } else {
-        $nextWhere = 'user_id = ? AND ((end_date IS NOT NULL AND end_date >= CURDATE()) OR (end_date IS NULL AND date >= CURDATE()))';
-        $nextParams = [$user['id']];
+        $currentUserId = (int)($user['id'] ?? 0);
+        $coordinatorPattern = '(^|\\[|,)[[:space:]]*' . $currentUserId . '[[:space:]]*(,|\\])';
+        $nextWhere = '(user_id = ? OR coordinator_id = ? OR coordinators REGEXP ? OR UPPER(TRIM(coordinator)) = UPPER(TRIM(?))) AND ((end_date IS NOT NULL AND end_date >= CURDATE()) OR (end_date IS NULL AND date >= CURDATE()))';
+        $nextParams = [$currentUserId, $currentUserId, $coordinatorPattern, (string)($user['name'] ?? '')];
     }
     
     $nextEvent = $db->prepare("

@@ -700,27 +700,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $db) {
                         $ev_id
                     ]);
                     // Auto-manage graphic_request when graphic designer selection changes
-                    $oldGraphics = strtoupper(trim((string)($fileRow['graphics'] ?? '')));
+                    $selectedGraphicIds = array_values(array_unique(array_filter(array_map('intval', is_array($ev_graphics_users) ? $ev_graphics_users : []), fn($id) => $id > 0)));
 
-                    if ($ev_graphics !== $oldGraphics) {
-                        try {
-                            // Cancel old active graphic request if graphic changed or removed
-                            if ($oldGraphics !== '') {
-                                $cancelOld = $db->prepare("UPDATE graphic_requests SET status = 'cancelled' WHERE event_id = ? AND status NOT IN ('completed','cancelled')");
-                                $cancelOld->execute([$ev_id]);
-                            }
-                            // Create new graphic request for the newly selected graphic
-                            if ($ev_graphics_user_id > 0) {
-                                $existGr = $db->prepare("SELECT id FROM graphic_requests WHERE event_id = ? AND status NOT IN ('completed','cancelled')");
-                                $existGr->execute([$ev_id]);
-                                if (!$existGr->fetch()) {
-                                    $grIns = $db->prepare("INSERT INTO graphic_requests (event_id, requested_by, assigned_to, assigned_by, status, assigned_at, notes) VALUES (?, ?, ?, ?, 'assigned', NOW(), 'Auto-assigned from event update')");
-                                    $grIns->execute([$ev_id, $user['id'], $ev_graphics_user_id, $user['id']]);
-                                }
-                            }
-                        } catch (Exception $e) {
-                            // Don't block event update if graphic request fails
+                    try {
+                        // Cancel old active graphic request if graphic changed or removed
+                        if ($selectedGraphicIds) {
+                            $selectedPlaceholders = implode(',', array_fill(0, count($selectedGraphicIds), '?'));
+                            $cancelOld = $db->prepare("UPDATE graphic_requests SET status = 'cancelled' WHERE event_id = ? AND status NOT IN ('completed','cancelled') AND (assigned_to IS NULL OR assigned_to NOT IN ($selectedPlaceholders))");
+                            $cancelOld->execute(array_merge([$ev_id], $selectedGraphicIds));
+                        } else {
+                            $cancelOld = $db->prepare("UPDATE graphic_requests SET status = 'cancelled' WHERE event_id = ? AND status NOT IN ('completed','cancelled')");
+                            $cancelOld->execute([$ev_id]);
                         }
+                        // Create new graphic request for the newly selected graphic
+                        foreach ($selectedGraphicIds as $selectedGraphicId) {
+                            $existGr = $db->prepare("SELECT id FROM graphic_requests WHERE event_id = ? AND assigned_to = ? AND status <> 'cancelled' LIMIT 1");
+                            $existGr->execute([$ev_id, $selectedGraphicId]);
+                            if (!$existGr->fetchColumn()) {
+                                $grIns = $db->prepare("INSERT INTO graphic_requests (event_id, requested_by, assigned_to, assigned_by, status, assigned_at, notes) VALUES (?, ?, ?, ?, 'assigned', NOW(), 'Auto-assigned from event update')");
+                                $grIns->execute([$ev_id, $user['id'], $selectedGraphicId, $user['id']]);
+                            }
+                        }
+                    } catch (Exception $e) {
+                        // Don't block event update if graphic request fails
                     }
 
                     try {
